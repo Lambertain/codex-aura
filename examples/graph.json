@@ -1,0 +1,182 @@
+{
+  "version": "0.1",
+  "generated_at": "2025-12-04T00:43:03.407902",
+  "repository": {
+    "path": "D:\\Automation\\Development\\projects\\codex-aura\\examples\\simple_project",
+    "name": "simple_project"
+  },
+  "stats": {
+    "total_nodes": 13,
+    "total_edges": 6,
+    "node_types": {
+      "file": 6,
+      "function": 6,
+      "class": 1
+    }
+  },
+  "nodes": [
+    {
+      "id": "config.py",
+      "type": "file",
+      "name": "config.py",
+      "path": "config.py",
+      "lines": null,
+      "docstring": null
+    },
+    {
+      "id": "main.py",
+      "type": "file",
+      "name": "main.py",
+      "path": "main.py",
+      "lines": null,
+      "docstring": null
+    },
+    {
+      "id": "utils.py",
+      "type": "file",
+      "name": "utils.py",
+      "path": "utils.py",
+      "lines": null,
+      "docstring": null
+    },
+    {
+      "id": "get_db_url",
+      "type": "function",
+      "name": "get_db_url",
+      "path": "utils.py",
+      "lines": [
+        4,
+        5
+      ],
+      "docstring": null
+    },
+    {
+      "id": "is_debug",
+      "type": "function",
+      "name": "is_debug",
+      "path": "utils.py",
+      "lines": [
+        8,
+        9
+      ],
+      "docstring": null
+    },
+    {
+      "id": "services\\user.py",
+      "type": "file",
+      "name": "user.py",
+      "path": "services\\user.py",
+      "lines": null,
+      "docstring": null
+    },
+    {
+      "id": "create_user",
+      "type": "function",
+      "name": "create_user",
+      "path": "services\\user.py",
+      "lines": [
+        5,
+        6
+      ],
+      "docstring": null
+    },
+    {
+      "id": "get_user_db_url",
+      "type": "function",
+      "name": "get_user_db_url",
+      "path": "services\\user.py",
+      "lines": [
+        9,
+        10
+      ],
+      "docstring": null
+    },
+    {
+      "id": "services\\__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "path": "services\\__init__.py",
+      "lines": null,
+      "docstring": null
+    },
+    {
+      "id": "services\\models\\user.py",
+      "type": "file",
+      "name": "user.py",
+      "path": "services\\models\\user.py",
+      "lines": null,
+      "docstring": null
+    },
+    {
+      "id": "User",
+      "type": "class",
+      "name": "User",
+      "path": "services\\models\\user.py",
+      "lines": [
+        4,
+        9
+      ],
+      "docstring": null
+    },
+    {
+      "id": "User::__init__",
+      "type": "function",
+      "name": "__init__",
+      "path": "services\\models\\user.py",
+      "lines": [
+        5,
+        6
+      ],
+      "docstring": null
+    },
+    {
+      "id": "User::get_db_url",
+      "type": "function",
+      "name": "get_db_url",
+      "path": "services\\models\\user.py",
+      "lines": [
+        8,
+        9
+      ],
+      "docstring": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "main.py",
+      "target": "utils.py",
+      "type": "IMPORTS",
+      "line": 1
+    },
+    {
+      "source": "main.py",
+      "target": "services\\user.py",
+      "type": "IMPORTS",
+      "line": 2
+    },
+    {
+      "source": "utils.py",
+      "target": "config.py",
+      "type": "IMPORTS",
+      "line": 1
+    },
+    {
+      "source": "services\\user.py",
+      "target": "utils.py",
+      "type": "IMPORTS",
+      "line": 1
+    },
+    {
+      "source": "services\\user.py",
+      "target": "services\\models\\user.py",
+      "type": "IMPORTS",
+      "line": 2
+    },
+    {
+      "source": "services\\models\\user.py",
+      "target": "config.py",
+      "type": "IMPORTS",
+      "line": 1
+    }
+  ]
+}
