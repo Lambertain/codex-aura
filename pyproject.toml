@@ -11,6 +11,7 @@ python = "^3.11"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
+pytest-cov = "*"
 ruff = "*"
 mypy = "*"
 
@@ -28,6 +29,10 @@ select = ["E", "F", "I", "N", "W"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+addopts = "--cov=codex_aura --cov-report=term-missing --cov-report=html --cov-fail-under=80"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 [build-system]
 requires = ["poetry-core"]
