@@ -1,5 +1,9 @@
 # Codex Aura
 
+[![CI](https://github.com/Lambertain/codex-aura/actions/workflows/ci.yml/badge.svg)](https://github.com/Lambertain/codex-aura/actions/workflows/ci.yml)
+[![PyPI version](https://badge.fury.io/py/codex-aura.svg)](https://pypi.org/project/codex-aura/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 Code context mapping for AI agents - analyze Python import relationships and dependencies.
 
 ## Installation
@@ -93,12 +97,14 @@ Benchmark: flask (127 files, 45K LOC)
 Performance: 44K LOC/sec
 ```
 
-## Development
+## Contributing
 
-```bash
-pip install -e ".[dev]"
-pytest
-```
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+
+- How to set up a development environment
+- Code style guidelines
+- How to run tests and linting
+- Pull request process
 
 ## License
 

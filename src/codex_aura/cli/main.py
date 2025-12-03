@@ -21,44 +21,34 @@ def main():
 
     # Analyze command
     analyze_parser = subparsers.add_parser("analyze", help="Analyze a repository")
+    analyze_parser.add_argument("path", help="Path to the repository to analyze")
     analyze_parser.add_argument(
-        "path",
-        help="Path to the repository to analyze"
+        "-v", "--verbose", action="store_true", help="Enable verbose logging for debugging"
     )
     analyze_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose logging for debugging"
-    )
-    analyze_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=str,
-        help="Output file path for the graph JSON (default: print to stdout)"
+        help="Output file path for the graph JSON (default: print to stdout)",
     )
     analyze_parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
-        help="Set logging level (default: INFO)"
+        help="Set logging level (default: INFO)",
     )
     analyze_parser.add_argument(
-        "-f", "--format",
+        "-f",
+        "--format",
         choices=["json", "pretty"],
         default="json",
-        help="Output format (default: json)"
+        help="Output format (default: json)",
     )
-    analyze_parser.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help="Minimal output"
-    )
+    analyze_parser.add_argument("-q", "--quiet", action="store_true", help="Minimal output")
 
     # Stats command
     stats_parser = subparsers.add_parser("stats", help="Show graph statistics")
-    stats_parser.add_argument(
-        "graph_file",
-        help="Path to the graph JSON file"
-    )
+    stats_parser.add_argument("graph_file", help="Path to the graph JSON file")
 
     args = parser.parse_args()
 
@@ -79,8 +69,7 @@ def analyze_repo(args):
     elif args.quiet or args.format == "pretty":
         log_level = logging.WARNING  # Suppress INFO logs for quiet/pretty
     logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Analyze repository
@@ -145,6 +134,7 @@ def analyze_repo(args):
         logger.error(f"Analysis failed: {e}")
         if args.verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 
@@ -168,7 +158,9 @@ def stats_repo(args):
         print()
         print("Nodes by type:")
         for node_type, count in graph.stats.node_types.items():
-            percentage = (count / graph.stats.total_nodes * 100) if graph.stats.total_nodes > 0 else 0
+            percentage = (
+                (count / graph.stats.total_nodes * 100) if graph.stats.total_nodes > 0 else 0
+            )
             print(f"  {node_type}:     {count} ({percentage:.0f}%)")
         print()
         print("Most connected files:")
@@ -184,7 +176,7 @@ def stats_repo(args):
             # Placeholder: calculate incoming/outgoing
             incoming = sum(1 for edge in graph.edges if edge.target == node.id)
             outgoing = sum(1 for edge in graph.edges if edge.source == node.id)
-            print(f"  {i+1}. {node.name}      ({incoming} incoming, {outgoing} outgoing)")
+            print(f"  {i + 1}. {node.name}      ({incoming} incoming, {outgoing} outgoing)")
 
     except Exception as e:
         print(f"Error: Failed to load or parse graph file: {e}", file=sys.stderr)

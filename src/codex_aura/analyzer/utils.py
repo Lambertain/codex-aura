@@ -6,23 +6,33 @@ logger = logging.getLogger(__name__)
 
 # Directories to ignore
 IGNORE_DIRS = {
-    '__pycache__',
-    '.venv',
-    'venv',
-    'env',
-    'node_modules',
-    '.git',
-    '.tox',
-    'dist',
-    'build',
-    '.pytest_cache',
-    '.mypy_cache',
-    '.coverage'
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    ".git",
+    ".tox",
+    "dist",
+    "build",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".coverage",
 }
 
 
 def find_python_files(repo_path: Path) -> List[Path]:
-    """Find all Python files in repository."""
+    """Find all Python files in a repository, excluding common build/dependency directories.
+
+    Walks through the repository tree and collects all .py files, skipping
+    directories that typically contain generated or third-party code.
+
+    Args:
+        repo_path: Path to the repository root directory.
+
+    Returns:
+        List of absolute paths to Python files in the repository.
+    """
     python_files = []
 
     for root, dirs, files in repo_path.walk():
@@ -30,11 +40,11 @@ def find_python_files(repo_path: Path) -> List[Path]:
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
 
         for file in files:
-            if file.endswith('.py'):
+            if file.endswith(".py"):
                 file_path = root / file
                 # Get relative path from repo root
                 try:
-                    relative_path = file_path.relative_to(repo_path)
+                    file_path.relative_to(repo_path)
                     python_files.append(file_path)
                 except ValueError:
                     # File is outside repo_path, skip

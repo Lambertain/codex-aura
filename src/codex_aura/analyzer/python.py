@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Set
+from typing import List
 
 from ..models.edge import Edge, EdgeType
 from ..models.graph import Graph, Repository, Stats
@@ -15,11 +15,36 @@ logger = logging.getLogger("codex_aura")
 
 
 class PythonAnalyzer(BaseAnalyzer):
+    """Analyzer for Python codebases that extracts import relationships and code structure.
+
+    This analyzer parses Python AST to extract:
+    - File nodes with docstrings
+    - Class definitions with inheritance and docstrings
+    - Function definitions (including methods) with signatures and docstrings
+    - Import relationships between files and modules
+    """
+
     def __init__(self, verbose: bool = False):
+        """Initialize the Python analyzer.
+
+        Args:
+            verbose: If True, enable verbose logging during analysis.
+        """
         self.verbose = verbose
 
     def analyze(self, repo_path: Path) -> Graph:
-        """Full repository analysis."""
+        """Perform complete analysis of a Python repository.
+
+        Analyzes all Python files in the repository, extracts code structure
+        (files, classes, functions) and import relationships, then builds
+        a complete dependency graph.
+
+        Args:
+            repo_path: Path to the repository root directory.
+
+        Returns:
+            A Graph object containing all analyzed nodes and edges.
+        """
         logger.info(f"Starting analysis of repository: {repo_path}")
 
         python_files = find_python_files(repo_path)
@@ -40,7 +65,10 @@ class PythonAnalyzer(BaseAnalyzer):
                 processed_files += 1
 
                 if self.verbose:
-                    logger.debug(f"Extracted {len(file_nodes)} nodes and {len(file_edges)} edges from {file_path}")
+                    logger.debug(
+                        f"Extracted {len(file_nodes)} nodes and "
+                        f"{len(file_edges)} edges from {file_path}"
+                    )
 
             except Exception as e:
                 logger.warning(f"Skipped file {file_path}: {e}")
@@ -65,19 +93,14 @@ class PythonAnalyzer(BaseAnalyzer):
         for node in nodes:
             node_types[node.type] = node_types.get(node.type, 0) + 1
 
-        stats = Stats(
-            total_nodes=len(nodes),
-            total_edges=len(valid_edges),
-            node_types=node_types
-        )
+        stats = Stats(total_nodes=len(nodes), total_edges=len(valid_edges), node_types=node_types)
 
-        logger.info(f"Analysis complete: {processed_files} files processed, {skipped_files} skipped")
+        logger.info(
+            f"Analysis complete: {processed_files} files processed, {skipped_files} skipped"
+        )
         logger.info(f"Graph contains {len(nodes)} nodes and {len(valid_edges)} edges")
 
-        repository = Repository(
-            path=str(repo_path),
-            name=repo_path.name
-        )
+        repository = Repository(path=str(repo_path), name=repo_path.name)
 
         return Graph(
             version="0.1",
@@ -85,10 +108,12 @@ class PythonAnalyzer(BaseAnalyzer):
             repository=repository,
             stats=stats,
             nodes=nodes,
-            edges=valid_edges
+            edges=valid_edges,
         )
 
-    def _check_integrity(self, edges: List[Edge], nodes: List[Node]) -> tuple[List[Edge], List[Edge]]:
+    def _check_integrity(
+        self, edges: List[Edge], nodes: List[Node]
+    ) -> tuple[List[Edge], List[Edge]]:
         """Check that all edge targets exist in nodes."""
         node_ids = {node.id for node in nodes}
         valid_edges = []
@@ -110,11 +135,26 @@ class PythonAnalyzer(BaseAnalyzer):
             type="file",
             name=file_path.name,
             path=str(relative_path),
-            docstring=None
+            docstring=None,
         )
 
-    def analyze_file(self, file_path: Path, repo_root: Path, all_files: set[Path]) -> tuple[List[Node], List[Edge]]:
-        """Analyze single Python file and return nodes and edges."""
+    def analyze_file(
+        self, file_path: Path, repo_root: Path, all_files: set[Path]
+    ) -> tuple[List[Node], List[Edge]]:
+        """Analyze a single Python file and extract nodes and edges.
+
+        Parses the file's AST to extract file node, class nodes, function nodes,
+        and import edges. Handles various error conditions gracefully.
+
+        Args:
+            file_path: Path to the Python file to analyze.
+            repo_root: Path to the repository root.
+            all_files: Set of all Python files in the repository for import resolution.
+
+        Returns:
+            A tuple of (nodes, edges) where nodes contains all extracted Node objects
+            and edges contains all extracted Edge objects.
+        """
         try:
             # Check if file is accessible
             if not file_path.exists():
@@ -126,7 +166,10 @@ class PythonAnalyzer(BaseAnalyzer):
             # Check file size
             file_size = file_path.stat().st_size
             if file_size > 10 * 1024 * 1024:  # 10MB limit
-                logger.warning(f"Large file detected ({file_size / (1024*1024):.1f}MB): {file_path}. Processing may be slow.")
+                logger.warning(
+                    f"Large file detected ({file_size / (1024 * 1024):.1f}MB): "
+                    f"{file_path}. Processing may be slow."
+                )
             elif file_size == 0:
                 logger.warning(f"Empty file: {file_path}")
                 file_node = self._create_file_node_only(file_path, repo_root)
@@ -134,7 +177,7 @@ class PythonAnalyzer(BaseAnalyzer):
 
             # Read file content
             try:
-                with file_path.open('r', encoding='utf-8') as f:
+                with file_path.open("r", encoding="utf-8") as f:
                     content = f.read()
             except UnicodeDecodeError as e:
                 logger.warning(f"Encoding error in {file_path}: {e}. Skipping file.")
@@ -175,9 +218,20 @@ class PythonAnalyzer(BaseAnalyzer):
 
 
 def parse_file_node(file_path: Path, repo_root: Path) -> Node:
-    """Create file node from Python file."""
+    """Create a file node from a Python file.
+
+    Extracts the file's docstring by parsing its AST and creates a Node
+    representing the file in the dependency graph.
+
+    Args:
+        file_path: Path to the Python file.
+        repo_root: Path to the repository root for relative path calculation.
+
+    Returns:
+        A Node object representing the file.
+    """
     try:
-        with file_path.open('r', encoding='utf-8') as f:
+        with file_path.open("r", encoding="utf-8") as f:
             content = f.read()
 
         # Parse AST to extract docstring
@@ -192,7 +246,7 @@ def parse_file_node(file_path: Path, repo_root: Path) -> Node:
             type="file",
             name=file_path.name,
             path=str(relative_path),
-            docstring=docstring
+            docstring=docstring,
         )
     except SyntaxError as e:
         logger.warning(f"Syntax error in {file_path}: {e}")
@@ -203,7 +257,7 @@ def parse_file_node(file_path: Path, repo_root: Path) -> Node:
             type="file",
             name=file_path.name,
             path=str(relative_path),
-            docstring=None
+            docstring=None,
         )
     except Exception as e:
         logger.error(f"Failed to parse {file_path}: {e}")
@@ -211,14 +265,25 @@ def parse_file_node(file_path: Path, repo_root: Path) -> Node:
 
 
 def extract_classes(tree: ast.AST, relative_file_path: str) -> list[Node]:
-    """Extract class nodes from AST."""
+    """Extract class definition nodes from an AST.
+
+    Walks through the AST and creates Node objects for all class definitions,
+    including their docstrings and line ranges.
+
+    Args:
+        tree: The AST to analyze.
+        relative_file_path: Relative path to the file being analyzed.
+
+    Returns:
+        List of Node objects representing class definitions.
+    """
     nodes = []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             docstring = ast.get_docstring(node)
             lines = [node.lineno]
-            if hasattr(node, 'end_lineno') and node.end_lineno:
+            if hasattr(node, "end_lineno") and node.end_lineno:
                 lines.append(node.end_lineno)
 
             class_node = Node(
@@ -227,7 +292,7 @@ def extract_classes(tree: ast.AST, relative_file_path: str) -> list[Node]:
                 name=node.name,
                 path=relative_file_path,
                 lines=lines,
-                docstring=docstring
+                docstring=docstring,
             )
             nodes.append(class_node)
 
@@ -254,7 +319,7 @@ class FunctionVisitor(ast.NodeVisitor):
     def _add_function(self, node):
         docstring = ast.get_docstring(node)
         lines = [node.lineno]
-        if hasattr(node, 'end_lineno') and node.end_lineno:
+        if hasattr(node, "end_lineno") and node.end_lineno:
             lines.append(node.end_lineno)
 
         if self.class_stack:
@@ -268,25 +333,48 @@ class FunctionVisitor(ast.NodeVisitor):
             name=node.name,
             path=self.relative_file_path,
             lines=lines,
-            docstring=docstring
+            docstring=docstring,
         )
         self.nodes.append(func_node)
 
 
 def extract_functions(tree: ast.AST, relative_file_path: str) -> list[Node]:
-    """Extract function nodes from AST."""
+    """Extract function and method definition nodes from an AST.
+
+    Walks through the AST and creates Node objects for all function definitions,
+    including regular functions, async functions, and class methods. Handles
+    nested class hierarchies correctly.
+
+    Args:
+        tree: The AST to analyze.
+        relative_file_path: Relative path to the file being analyzed.
+
+    Returns:
+        List of Node objects representing function definitions.
+    """
     visitor = FunctionVisitor(relative_file_path)
     visitor.visit(tree)
     return visitor.nodes
 
 
 def extract_imports(
-    tree: ast.AST,
-    file_path: Path,
-    repo_root: Path,
-    all_files: set[Path]
+    tree: ast.AST, file_path: Path, repo_root: Path, all_files: set[Path]
 ) -> list[Edge]:
-    """Extract import edges from AST."""
+    """Extract import relationship edges from an AST.
+
+    Analyzes import statements (both 'import' and 'from ... import') and creates
+    Edge objects for internal imports within the repository. Handles both
+    absolute and relative imports.
+
+    Args:
+        tree: The AST to analyze.
+        file_path: Path to the file being analyzed.
+        repo_root: Path to the repository root.
+        all_files: Set of all Python files in the repository for import resolution.
+
+    Returns:
+        List of Edge objects representing import relationships.
+    """
     edges = []
     relative_path = file_path.relative_to(repo_root)
     file_dir = file_path.parent
@@ -303,7 +391,7 @@ def extract_imports(
                             source=str(relative_path),
                             target=str(target_path),
                             type=EdgeType.IMPORTS,
-                            line=node.lineno
+                            line=node.lineno,
                         )
                         edges.append(edge)
                     else:
@@ -314,7 +402,9 @@ def extract_imports(
                 module_name = node.module
                 # Handle relative imports
                 if node.level > 0:
-                    module_name = _resolve_relative_import(node.level, module_name, file_path, repo_root)
+                    module_name = _resolve_relative_import(
+                        node.level, module_name, file_path, repo_root
+                    )
 
                 if module_name and _is_internal_import(module_name, repo_root, all_files, file_dir):
                     target_path = _resolve_import_path(module_name, repo_root, all_files, file_dir)
@@ -323,7 +413,7 @@ def extract_imports(
                             source=str(relative_path),
                             target=str(target_path),
                             type=EdgeType.IMPORTS,
-                            line=node.lineno
+                            line=node.lineno,
                         )
                         edges.append(edge)
                     else:
@@ -332,23 +422,27 @@ def extract_imports(
     return edges
 
 
-def _is_internal_import(module_name: str, repo_root: Path, all_files: set[Path], file_dir: Path) -> bool:
+def _is_internal_import(
+    module_name: str, repo_root: Path, all_files: set[Path], file_dir: Path
+) -> bool:
     """Check if import is internal to the repository."""
     # Simple check: if we can resolve it to a file in all_files
     return _resolve_import_path(module_name, repo_root, all_files, file_dir) is not None
 
 
-def _resolve_import_path(module_name: str, repo_root: Path, all_files: set[Path], file_dir: Path) -> Path | None:
+def _resolve_import_path(
+    module_name: str, repo_root: Path, all_files: set[Path], file_dir: Path
+) -> Path | None:
     """Resolve module name to file path."""
     # Convert module name to path
-    module_path = module_name.replace('.', '/')
+    module_path = module_name.replace(".", "/")
 
     # Try relative to file directory first (for simple cases)
     possible_paths = [
         file_dir / f"{module_path}.py",
         file_dir / module_path / "__init__.py",
         repo_root / f"{module_path}.py",
-        repo_root / module_path / "__init__.py"
+        repo_root / module_path / "__init__.py",
     ]
 
     for path in possible_paths:
@@ -357,13 +451,19 @@ def _resolve_import_path(module_name: str, repo_root: Path, all_files: set[Path]
     return None
 
 
-def _resolve_relative_import(level: int, module_name: str, file_path: Path, repo_root: Path) -> str | None:
+def _resolve_relative_import(
+    level: int, module_name: str, file_path: Path, repo_root: Path
+) -> str | None:
     """Resolve relative import to absolute module name."""
     current_dir = file_path.parent
     for _ in range(level - 1):
         current_dir = current_dir.parent
 
     if module_name:
-        return str((current_dir / module_name).relative_to(repo_root)).replace('/', '.').replace('\\', '.')
+        return (
+            str((current_dir / module_name).relative_to(repo_root))
+            .replace("/", ".")
+            .replace("\\", ".")
+        )
     else:
-        return str(current_dir.relative_to(repo_root)).replace('/', '.').replace('\\', '.')
+        return str(current_dir.relative_to(repo_root)).replace("/", ".").replace("\\", ".")
