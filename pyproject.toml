@@ -1,23 +1,29 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
+[tool.poetry]
 name = "codex-aura"
 version = "0.1.0"
-description = "A Python project for codex-aura"
-authors = [
-    {name = "Lambertain", email = "your.email@example.com"},
-]
-license = {text = "Apache-2.0"}
-requires-python = ">=3.8"
-dependencies = []
+description = "Code context mapping for AI agents"
+authors = ["Lambertain <your.email@example.com>"]
+license = "Apache-2.0"
+python = "^3.11"
 
-[project.optional-dependencies]
-dev = ["pytest", "black", "flake8"]
+[tool.poetry.dependencies]
+python = "^3.11"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+ruff = "*"
+mypy = "*"
 
-[tool.setuptools.package-dir]
-"" = "src"
+[tool.poetry.scripts]
+codex-aura = "codex_aura.cli.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
