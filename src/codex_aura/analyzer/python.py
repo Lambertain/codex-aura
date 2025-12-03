@@ -1,8 +1,9 @@
 import ast
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Set
 
 from ..models.edge import Edge, EdgeType
 from ..models.graph import Graph, Repository, Stats
@@ -10,24 +11,54 @@ from ..models.node import Node
 from .base import BaseAnalyzer
 from .utils import find_python_files
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("codex_aura")
 
 
 class PythonAnalyzer(BaseAnalyzer):
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+
     def analyze(self, repo_path: Path) -> Graph:
-        """Analyze Python repository and return graph."""
-        nodes = []
-        edges = []
+        """Full repository analysis."""
+        logger.info(f"Starting analysis of repository: {repo_path}")
 
         python_files = find_python_files(repo_path)
         all_files = set(python_files)
-        for file_path in python_files:
+        logger.info(f"Found {len(python_files)} Python files to analyze")
+
+        nodes = []
+        edges = []
+        processed_files = 0
+        skipped_files = 0
+
+        for i, file_path in enumerate(python_files, 1):
+            logger.info(f"Processing file {i}/{len(python_files)}: {file_path.name}")
             try:
                 file_nodes, file_edges = self.analyze_file(file_path, repo_path, all_files)
                 nodes.extend(file_nodes)
                 edges.extend(file_edges)
+                processed_files += 1
+
+                if self.verbose:
+                    logger.debug(f"Extracted {len(file_nodes)} nodes and {len(file_edges)} edges from {file_path}")
+
             except Exception as e:
-                logger.warning(f"Failed to analyze {file_path}: {e}")
+                logger.warning(f"Skipped file {file_path}: {e}")
+                skipped_files += 1
+                # Still create file node for skipped files
+                try:
+                    file_node = self._create_file_node_only(file_path, repo_path)
+                    nodes.append(file_node)
+                except Exception as node_e:
+                    logger.error(f"Failed to create file node for {file_path}: {node_e}")
+
+        # Check graph integrity
+        valid_edges, invalid_edges = self._check_integrity(edges, nodes)
+        if invalid_edges:
+            logger.warning(f"Found {len(invalid_edges)} invalid edges (dangling references)")
+            if self.verbose:
+                for edge in invalid_edges[:5]:  # Show first 5 invalid edges
+                    logger.debug(f"Invalid edge: {edge.source} -> {edge.target}")
 
         # Calculate stats
         node_types = {}
@@ -36,9 +67,12 @@ class PythonAnalyzer(BaseAnalyzer):
 
         stats = Stats(
             total_nodes=len(nodes),
-            total_edges=len(edges),
+            total_edges=len(valid_edges),
             node_types=node_types
         )
+
+        logger.info(f"Analysis complete: {processed_files} files processed, {skipped_files} skipped")
+        logger.info(f"Graph contains {len(nodes)} nodes and {len(valid_edges)} edges")
 
         repository = Repository(
             path=str(repo_path),
@@ -51,17 +85,75 @@ class PythonAnalyzer(BaseAnalyzer):
             repository=repository,
             stats=stats,
             nodes=nodes,
-            edges=edges
+            edges=valid_edges
+        )
+
+    def _check_integrity(self, edges: List[Edge], nodes: List[Node]) -> tuple[List[Edge], List[Edge]]:
+        """Check that all edge targets exist in nodes."""
+        node_ids = {node.id for node in nodes}
+        valid_edges = []
+        invalid_edges = []
+
+        for edge in edges:
+            if edge.target in node_ids:
+                valid_edges.append(edge)
+            else:
+                invalid_edges.append(edge)
+
+        return valid_edges, invalid_edges
+
+    def _create_file_node_only(self, file_path: Path, repo_root: Path) -> Node:
+        """Create a file node without parsing content."""
+        relative_path = file_path.relative_to(repo_root)
+        return Node(
+            id=str(relative_path),
+            type="file",
+            name=file_path.name,
+            path=str(relative_path),
+            docstring=None
         )
 
     def analyze_file(self, file_path: Path, repo_root: Path, all_files: set[Path]) -> tuple[List[Node], List[Edge]]:
         """Analyze single Python file and return nodes and edges."""
         try:
-            with file_path.open('r', encoding='utf-8') as f:
-                content = f.read()
+            # Check if file is accessible
+            if not file_path.exists():
+                raise FileNotFoundError(f"File does not exist: {file_path}")
 
-            tree = ast.parse(content, filename=str(file_path))
+            if not os.access(file_path, os.R_OK):
+                raise PermissionError(f"File is not readable: {file_path}")
 
+            # Check file size
+            file_size = file_path.stat().st_size
+            if file_size > 10 * 1024 * 1024:  # 10MB limit
+                logger.warning(f"Large file detected ({file_size / (1024*1024):.1f}MB): {file_path}. Processing may be slow.")
+            elif file_size == 0:
+                logger.warning(f"Empty file: {file_path}")
+                file_node = self._create_file_node_only(file_path, repo_root)
+                return [file_node], []
+
+            # Read file content
+            try:
+                with file_path.open('r', encoding='utf-8') as f:
+                    content = f.read()
+            except UnicodeDecodeError as e:
+                logger.warning(f"Encoding error in {file_path}: {e}. Skipping file.")
+                file_node = self._create_file_node_only(file_path, repo_root)
+                return [file_node], []
+
+            # Parse AST
+            try:
+                tree = ast.parse(content, filename=str(file_path))
+            except SyntaxError as e:
+                logger.warning(f"Syntax error in {file_path}: {e}")
+                file_node = self._create_file_node_only(file_path, repo_root)
+                return [file_node], []
+            except Exception as e:
+                logger.warning(f"AST parsing failed for {file_path}: {e}")
+                file_node = self._create_file_node_only(file_path, repo_root)
+                return [file_node], []
+
+            # Extract nodes and edges
             relative_file_path = str(file_path.relative_to(repo_root))
             file_node = parse_file_node(file_path, repo_root)
             class_nodes = extract_classes(tree, relative_file_path)
@@ -70,13 +162,15 @@ class PythonAnalyzer(BaseAnalyzer):
 
             nodes = [file_node] + class_nodes + function_nodes
             return nodes, import_edges
-        except SyntaxError as e:
-            logger.warning(f"Syntax error in {file_path}: {e}")
-            # Still create file node
-            file_node = parse_file_node(file_path, repo_root)
-            return [file_node], []
+
+        except FileNotFoundError as e:
+            logger.warning(f"File not found: {e}")
+            raise
+        except PermissionError as e:
+            logger.warning(f"Permission denied: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Failed to parse {file_path}: {e}")
+            logger.error(f"Unexpected error analyzing {file_path}: {e}")
             raise
 
 
