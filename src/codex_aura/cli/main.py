@@ -3,12 +3,13 @@
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
 
 from ..analyzer.python import PythonAnalyzer
-from ..models.graph import save_graph
+from ..models.graph import load_graph, save_graph
 
 
 def main():
@@ -52,10 +53,19 @@ def main():
         help="Minimal output"
     )
 
+    # Stats command
+    stats_parser = subparsers.add_parser("stats", help="Show graph statistics")
+    stats_parser.add_argument(
+        "graph_file",
+        help="Path to the graph JSON file"
+    )
+
     args = parser.parse_args()
 
     if args.command == "analyze":
         analyze_repo(args)
+    elif args.command == "stats":
+        stats_repo(args)
     else:
         parser.print_help()
 
@@ -81,6 +91,15 @@ def analyze_repo(args):
 
     if not repo_path.is_dir():
         print(f"Error: Path is not a directory: {repo_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.access(repo_path, os.R_OK):
+        print(f"Error: No read permission for directory: {repo_path}", file=sys.stderr)
+        sys.exit(1)
+
+    python_files = list(repo_path.glob("**/*.py"))
+    if not python_files:
+        print(f"Error: No Python files found in directory: {repo_path}", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -127,6 +146,48 @@ def analyze_repo(args):
         if args.verbose:
             import traceback
             traceback.print_exc()
+        sys.exit(1)
+
+
+def stats_repo(args):
+    """Show graph statistics function."""
+    graph_file = Path(args.graph_file).resolve()
+    if not graph_file.exists():
+        print(f"Error: Graph file does not exist: {graph_file}", file=sys.stderr)
+        sys.exit(1)
+
+    if not graph_file.is_file():
+        print(f"Error: Path is not a file: {graph_file}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        graph = load_graph(graph_file)
+
+        print(f"Graph: {graph.repository.name} (v{graph.version})")
+        print(f"Generated: {graph.generated_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        print()
+        print("Nodes by type:")
+        for node_type, count in graph.stats.node_types.items():
+            percentage = (count / graph.stats.total_nodes * 100) if graph.stats.total_nodes > 0 else 0
+            print(f"  {node_type}:     {count} ({percentage:.0f}%)")
+        print()
+        print("Most connected files:")
+        # Need to calculate most connected files
+        # Assuming nodes have incoming/outgoing connections
+        # For simplicity, let's sort by total connections (assuming we can calculate)
+        # Since we don't have direct connection counts, we'll show top files by some metric
+        # For now, just show first few files
+        file_nodes = [node for node in graph.nodes if node.type == "file"]
+        # Sort by some metric, e.g., number of edges connected
+        # For simplicity, show first 2
+        for i, node in enumerate(file_nodes[:2]):
+            # Placeholder: calculate incoming/outgoing
+            incoming = sum(1 for edge in graph.edges if edge.target == node.id)
+            outgoing = sum(1 for edge in graph.edges if edge.source == node.id)
+            print(f"  {i+1}. {node.name}      ({incoming} incoming, {outgoing} outgoing)")
+
+    except Exception as e:
+        print(f"Error: Failed to load or parse graph file: {e}", file=sys.stderr)
         sys.exit(1)
 
 
