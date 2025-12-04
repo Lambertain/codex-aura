@@ -11,7 +11,19 @@ from ..models.graph import Graph, save_graph
 from ..storage.sqlite import SQLiteStorage
 from collections import deque
 
-app = FastAPI(title="Codex Aura API", version="0.1.0")
+app = FastAPI(
+    title="Codex Aura API",
+    description="REST API for code analysis and dependency graph generation",
+    version="0.1.0",
+    contact={
+        "name": "Codex Aura Team",
+        "url": "https://github.com/codex-aura/codex-aura",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+)
 
 # Initialize storage
 storage = SQLiteStorage()
@@ -20,9 +32,18 @@ storage = SQLiteStorage()
 class AnalyzeRequest(BaseModel):
     """Request model for analyze endpoint."""
 
-    repo_path: str
-    edge_types: list[str]
+    repo_path: str = "."
+    edge_types: list[str] = ["imports", "calls", "extends"]
     options: dict = {}
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "repo_path": "./my-python-project",
+                "edge_types": ["imports", "calls"],
+                "options": {"exclude_patterns": ["test_*"]}
+            }
+        }
 
 
 class AnalyzeResponse(BaseModel):
@@ -87,6 +108,17 @@ class ContextRequest(BaseModel):
     depth: int = 2
     include_code: bool = True
     max_nodes: int = 50
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "graph_id": "g_abc123def456",
+                "entry_points": ["module.main", "module.utils.Helper"],
+                "depth": 3,
+                "include_code": False,
+                "max_nodes": 25
+            }
+        }
 
     @field_validator("depth")
     @classmethod
@@ -159,6 +191,8 @@ async def ready():
     return {"status": "ready"}
 
 
+
+
 @app.get("/api/v1/info")
 async def info():
     """Server information endpoint."""
@@ -172,7 +206,21 @@ async def info():
 
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 async def analyze(request: AnalyzeRequest):
-    """Analyze a repository and store the graph."""
+    """
+    Analyze a repository and generate a dependency graph.
+
+    This endpoint performs static code analysis on a Python repository
+    and generates a comprehensive dependency graph showing relationships
+    between modules, classes, and functions.
+
+    The analysis includes:
+    - Import relationships between modules
+    - Function/method calls
+    - Class inheritance hierarchies
+    - File dependencies
+
+    The generated graph is stored and can be retrieved using the returned graph_id.
+    """
     import time
     import uuid
 
@@ -232,7 +280,14 @@ async def get_graph(
     node_types: str | None = None,
     edge_types: str | None = None
 ):
-    """Get complete graph with optional filtering."""
+    """
+    Retrieve a complete dependency graph.
+
+    Returns the full graph data including all nodes and edges.
+    Supports optional filtering by node types and edge types.
+
+    Use include_code=true to include source code in node data (increases response size).
+    """
     graph = storage.load_graph(graph_id)
     if not graph:
         raise HTTPException(status_code=404, detail="Graph not found")
@@ -402,7 +457,15 @@ async def get_dependencies(
 
 @app.post("/api/v1/context", response_model=ContextResponse)
 async def get_context(request: ContextRequest):
-    """Get context nodes starting from entry points using BFS traversal."""
+    """
+    Get contextual nodes around entry points.
+
+    Performs breadth-first search traversal from specified entry points
+    to gather relevant context nodes within the specified depth.
+
+    Useful for understanding the code context around specific functions
+    or classes, with relevance scoring based on distance from entry points.
+    """
     # Validate depth
     if request.depth < 1 or request.depth > 5:
         raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")

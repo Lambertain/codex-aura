@@ -1,0 +1,49 @@
+site_name: Codex Aura Documentation
+site_description: 'Code analysis and dependency graph generation tool'
+site_author: 'Codex Aura Team'
+site_url: 'https://codex-aura.github.io/'
+
+repo_name: 'codex-aura/codex-aura'
+repo_url: 'https://github.com/codex-aura/codex-aura'
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+      - Configuration: getting-started/configuration.md
+  - CLI:
+      - Analyze: cli/analyze.md
+      - Serve: cli/serve.md
+      - Commands: cli/commands.md
+  - API:
+      - Overview: api/overview.md
+      - Endpoints: api/endpoints.md
+      - Schemas: api/schemas.md
+  - Integrations:
+      - VS Code: integrations/vscode.md
+      - GitHub Action: integrations/github-action.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Architecture: development/architecture.md
+
+theme:
+  name: material
+  palette:
+    primary: purple
+    accent: purple
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
