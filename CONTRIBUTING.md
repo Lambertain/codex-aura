@@ -138,6 +138,54 @@ When reporting bugs or requesting features:
 - Include relevant code samples
 - Specify your Python version and OS
 
+## Dependency Management
+
+### Security Audits
+
+Codex Aura uses automated security audits to ensure dependencies are free from known vulnerabilities:
+
+- **CI Security Checks**: Every push and PR runs `pip-audit` and `safety check` to scan for vulnerabilities
+- **Dependabot**: Automatically creates PRs for dependency updates weekly
+- **Manual Audits**: Run security checks locally with:
+
+```bash
+pip install pip-audit safety
+pip-audit
+safety check
+```
+
+### Updating Dependencies
+
+1. **Automatic Updates**: Dependabot creates PRs for security and regular updates
+2. **Manual Updates**: For major version changes or when Dependabot is insufficient:
+
+```bash
+# Update dependencies
+poetry update
+
+# Run tests to ensure compatibility
+pytest
+
+# Run security audit
+pip install pip-audit safety
+pip-audit
+safety check
+
+# Update lock file
+poetry lock
+```
+
+3. **Review Process**:
+   - Check test suite passes
+   - Verify security audit passes
+   - Review changelog for breaking changes
+   - Test integration manually if needed
+
+4. **Commit Process**:
+   - Use conventional commit messages with `deps:` prefix
+   - Include scope when updating specific packages
+   - Example: `deps: update fastapi from 0.100.0 to 0.101.0`
+
 ## License
 
 By contributing to Codex Aura, you agree that your contributions will be licensed under the Apache License 2.0.

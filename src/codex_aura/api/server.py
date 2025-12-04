@@ -41,6 +41,7 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
 # Add middleware
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 
@@ -58,6 +59,18 @@ ALLOWED_ROOTS = [
     Path("/tmp"),
     # Add more as needed
 ]
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware to add security headers to all responses."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
