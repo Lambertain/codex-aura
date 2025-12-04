@@ -1,0 +1,6 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="16" fill="#1e1e1e"/>
+  <circle cx="64" cy="64" r="40" fill="#007acc" stroke="#ffffff" stroke-width="4"/>
+  <path d="M44 64L56 76L84 48" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="64" y="110" text-anchor="middle" fill="#ffffff" font-family="Arial, sans-serif" font-size="12">Codex Aura</text>
+</svg>

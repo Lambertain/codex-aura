@@ -1,25 +1,31 @@
-# Codex Aura VS Code Extension
+# Codex Aura
 
-A VS Code extension for visualizing code context graphs using Codex Aura API.
+Interactive code dependency visualization and analysis tool for VS Code.
 
 ## Features
 
-- **Graph Visualization**: Interactive graph view of code dependencies and relationships
-- **Node Details**: Detailed information panel for selected nodes
-- **Workspace Analysis**: Analyze entire workspaces for code insights
-- **D3.js Integration**: Smooth, interactive visualizations with zoom and pan
+- **📊 Graph Visualization**: Interactive graph view of code dependencies and relationships
+- **🔍 Node Details**: Detailed information panel for selected nodes
+- **⚡ Workspace Analysis**: Analyze entire workspaces for code insights
+- **🎯 Status Bar Integration**: Real-time server connection status
+- **🎨 D3.js Integration**: Smooth, interactive visualizations with zoom and pan
 
 ## Installation
 
-1. Clone the repository
-2. Run `npm install` to install dependencies
-3. Run `npm run compile` to build the extension
-4. Open VS Code and go to Extensions > Install from VSIX
-5. Select the generated `.vsix` file
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=codex-aura.codex-aura) or search for "Codex Aura" in the Extensions view.
+
+## Requirements
+
+- VS Code 1.85.0 or higher
+- Codex Aura server running (default: http://localhost:8000)
 
 ## Configuration
 
 Configure the Codex Aura server URL in VS Code settings:
+
+1. Open VS Code Settings (`Ctrl+,`)
+2. Search for "Codex Aura"
+3. Set the server URL in `Codex Aura: Server Url`
 
 ```json
 {
@@ -29,53 +35,59 @@ Configure the Codex Aura server URL in VS Code settings:
 
 ## Usage
 
-1. Open Command Palette (`Ctrl+Shift+P`)
-2. Run `Codex Aura: Show Code Graph` to visualize graphs
-3. Run `Codex Aura: Analyze Workspace` to analyze the current workspace
+### Basic Usage
 
-## Development
+1. **Open Command Palette** (`Ctrl+Shift+P`)
+2. **Run "Codex Aura: Analyze Workspace"** to analyze your codebase
+3. **Run "Codex Aura: Show Code Graph"** to visualize the dependency graph
 
-### Prerequisites
+### Status Bar
 
-- Node.js 18+
-- VS Code
+The status bar shows the connection status:
+- $(database) **Codex Aura: Ready** - Server is connected
+- $(warning) **Codex Aura: Not Connected** - Server is unavailable
+- $(sync~spin) **Analyzing...** - Analysis in progress
 
-### Building
+Click the status bar item to open settings.
 
-```bash
-npm install
-npm run compile
-```
+### Graph Navigation
 
-### Testing
+- **Zoom**: Mouse wheel or pinch gestures
+- **Pan**: Click and drag
+- **Select Nodes**: Click on nodes to view details
+- **Dependencies**: Right-click files in Explorer to show dependencies
 
-```bash
-npm run test
-```
+## Commands
 
-### Debugging
+- `Codex Aura: Show Code Graph` - Display the code dependency graph
+- `Codex Aura: Analyze Workspace` - Analyze the current workspace
+- `Codex Aura: Show Dependencies` - Show dependencies for selected file
+- `Codex Aura: Show Function Dependencies` - Show dependencies for current function
+- `Codex Aura: Open Settings` - Open extension settings
 
-1. Open the project in VS Code
-2. Press F5 to launch extension development host
-3. Test the extension in the new window
+## Troubleshooting
 
-## API Integration
+### Server Connection Issues
 
-The extension communicates with Codex Aura API endpoints:
+1. Ensure the Codex Aura server is running
+2. Check the server URL in settings
+3. Verify network connectivity
 
-- `GET /api/v1/graphs` - List available graphs
-- `GET /api/v1/graph/{id}` - Get specific graph
-- `GET /api/v1/graph/{id}/node/{nodeId}` - Get node details
-- `GET /api/v1/graph/{id}/node/{nodeId}/dependencies` - Get node dependencies
+### Analysis Fails
+
+1. Check that you have a workspace folder open
+2. Ensure the server can access your project files
+3. Check VS Code output panel for error messages
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests
-5. Submit a pull request
+We welcome contributions! Please see our [contributing guide](https://github.com/Lambertain/codex-aura/blob/master/CONTRIBUTING.md) for details.
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT License - see [LICENSE](https://github.com/Lambertain/codex-aura/blob/master/LICENSE) file for details
+
+## Support
+
+- [GitHub Issues](https://github.com/Lambertain/codex-aura/issues)
+- [Documentation](https://github.com/Lambertain/codex-aura#readme)

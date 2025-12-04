@@ -1,10 +1,32 @@
 {
   "name": "codex-aura",
   "displayName": "Codex Aura",
-  "description": "Code context visualization",
+  "description": "Interactive code dependency visualization and analysis tool",
   "version": "0.1.0",
+  "publisher": "codex-aura",
   "engines": {"vscode": "^1.85.0"},
   "categories": ["Other"],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lambertain/codex-aura.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Lambertain/codex-aura/issues"
+  },
+  "homepage": "https://github.com/Lambertain/codex-aura#readme",
+  "keywords": ["code-analysis", "visualization", "dependencies", "graph", "codebase"],
+  "screenshots": [
+    {
+      "filename": "media/screenshot1.png",
+      "label": "Code Dependency Graph Visualization",
+      "markdownDescription": "Interactive visualization of code dependencies and relationships"
+    }
+  ],
   "activationEvents": ["onCommand:codexAura.showGraph"],
   "main": "./out/extension.js",
   "contributes": {
