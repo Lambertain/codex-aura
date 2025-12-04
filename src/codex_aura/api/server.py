@@ -4,7 +4,8 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator, Field, constr
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -44,6 +45,12 @@ app.state.limiter = limiter
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
+
+# Mount static files
+import os
+static_path = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_path):
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
 
 # Rate limit exceeded handler
 @app.exception_handler(RateLimitExceeded)
@@ -317,6 +324,663 @@ async def info():
     }
 
 
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the main graph visualization page."""
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Codex Aura - Code Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        .header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #404040;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            z-index: 1000;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 18px;
+            color: #ffffff;
+        }
+
+        .controls {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 15px;
+            min-width: 250px;
+            z-index: 100;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #cccccc;
+        }
+
+        .control-group select, .control-group input {
+            width: 100%;
+            padding: 5px;
+            background: #1e1e1e;
+            border: 1px solid #404040;
+            border-radius: 4px;
+            color: #ffffff;
+        }
+
+        .graph-container {
+            position: absolute;
+            top: 50px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        .node-details {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            width: 350px;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: calc(100vh - 100px);
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+
+        .node-details h3 {
+            margin-top: 0;
+            color: #ffffff;
+        }
+
+        .node-details .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            color: #cccccc;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        .clickable {
+            cursor: pointer;
+            color: #4fc3f7;
+            text-decoration: underline;
+        }
+
+        .clickable:hover {
+            color: #29b6f6;
+        }
+
+        pre {
+            background: #1e1e1e;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            border: 1px solid #404040;
+        }
+
+        code {
+            font-family: 'Fira Code', 'Courier New', monospace;
+        }
+
+        .stats {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 12px;
+            z-index: 100;
+        }
+
+        .minimap {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            overflow: hidden;
+            z-index: 100;
+        }
+
+        .minimap svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100px;
+            left: 20px;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+
+        .search-result-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #404040;
+        }
+
+        .search-result-item:hover {
+            background: #404040;
+        }
+
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Codex Aura - Code Dependency Graph</h1>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="graph-select">Graph:</label>
+            <select id="graph-select">
+                <option value="">Select a graph...</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="node-filter">Node Types:</label>
+            <select id="node-filter" multiple>
+                <option value="file" selected>File</option>
+                <option value="class" selected>Class</option>
+                <option value="function" selected>Function</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="edge-filter">Edge Types:</label>
+            <select id="edge-filter" multiple>
+                <option value="IMPORTS" selected>Imports</option>
+                <option value="CALLS" selected>Calls</option>
+                <option value="EXTENDS" selected>Extends</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="search">Search Nodes:</label>
+            <input type="text" id="search" placeholder="Search...">
+        </div>
+
+        <button onclick="resetView()">Reset View</button>
+    </div>
+
+    <div class="graph-container">
+        <svg id="graph-svg"></svg>
+    </div>
+
+    <div class="node-details" id="node-details">
+        <button class="close-btn" onclick="closeNodeDetails()">&times;</button>
+        <h3>Node Details</h3>
+        <div id="node-content">
+            <p>Select a node to view details</p>
+        </div>
+    </div>
+
+    <div class="stats" id="stats">
+        Nodes: 0 | Edges: 0 | Filtered: 0
+    </div>
+
+    <div class="minimap" id="minimap">
+        <svg id="minimap-svg"></svg>
+    </div>
+
+    <div class="search-results" id="search-results"></div>
+
+    <script>
+        let currentGraph = null;
+        let svg, g, zoom, simulation;
+        let nodes = [], links = [];
+        let filteredNodes = [], filteredLinks = [];
+        let width, height;
+        let minimapSvg, minimapG;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeGraph();
+            loadGraphs();
+        });
+
+        function initializeGraph() {
+            const container = document.querySelector('.graph-container');
+            width = container.clientWidth;
+            height = container.clientHeight;
+
+            svg = d3.select('#graph-svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            g = svg.append('g');
+
+            // Add zoom behavior
+            zoom = d3.zoom()
+                .scaleExtent([0.1, 4])
+                .on('zoom', function(event) {
+                    g.attr('transform', event.transform);
+                    updateMinimap();
+                });
+
+            svg.call(zoom);
+
+            // Initialize simulation
+            simulation = d3.forceSimulation()
+                .force('link', d3.forceLink().id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(20));
+
+            // Initialize minimap
+            minimapSvg = d3.select('#minimap-svg')
+                .attr('width', 200)
+                .attr('height', 150);
+
+            minimapG = minimapSvg.append('g');
+
+            // Add event listeners
+            document.getElementById('graph-select').addEventListener('change', loadSelectedGraph);
+            document.getElementById('node-filter').addEventListener('change', applyFilters);
+            document.getElementById('edge-filter').addEventListener('change', applyFilters);
+            document.getElementById('search').addEventListener('input', handleSearch);
+        }
+
+        async function loadGraphs() {
+            try {
+                const response = await fetch('/api/v1/graphs');
+                const data = await response.json();
+
+                const select = document.getElementById('graph-select');
+                data.graphs.forEach(graph => {
+                    const option = document.createElement('option');
+                    option.value = graph.id;
+                    option.textContent = `${graph.repo_name} (${graph.node_count} nodes, ${graph.edge_count} edges)`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load graphs:', error);
+            }
+        }
+
+        async function loadSelectedGraph() {
+            const graphId = document.getElementById('graph-select').value;
+            if (!graphId) return;
+
+            try {
+                const response = await fetch(`/api/v1/graph/${graphId}`);
+                currentGraph = await response.json();
+
+                nodes = currentGraph.nodes;
+                links = currentGraph.edges;
+
+                applyFilters();
+            } catch (error) {
+                console.error('Failed to load graph:', error);
+            }
+        }
+
+        function applyFilters() {
+            const nodeTypes = Array.from(document.getElementById('node-filter').selectedOptions).map(o => o.value);
+            const edgeTypes = Array.from(document.getElementById('edge-filter').selectedOptions).map(o => o.value);
+
+            filteredNodes = nodes.filter(node => nodeTypes.includes(node.type));
+            filteredLinks = links.filter(link =>
+                edgeTypes.includes(link.type) &&
+                filteredNodes.some(n => n.id === link.source) &&
+                filteredNodes.some(n => n.id === link.target)
+            );
+
+            updateGraph();
+        }
+
+        function updateGraph() {
+            // Clear previous elements
+            g.selectAll('*').remove();
+
+            // Update simulation
+            simulation.nodes(filteredNodes);
+            simulation.force('link').links(filteredLinks);
+
+            // Create links
+            const link = g.append('g')
+                .attr('class', 'links')
+                .selectAll('line')
+                .data(filteredLinks)
+                .enter().append('line')
+                .attr('stroke', d => getEdgeColor(d.type))
+                .attr('stroke-width', 2)
+                .attr('stroke-opacity', 0.6);
+
+            // Create nodes
+            const node = g.append('g')
+                .attr('class', 'nodes')
+                .selectAll('g')
+                .data(filteredNodes)
+                .enter().append('g')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+
+            // Add circles
+            node.append('circle')
+                .attr('r', d => getNodeRadius(d))
+                .attr('fill', d => getNodeColor(d.type))
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 2)
+                .on('click', function(event, d) {
+                    event.stopPropagation();
+                    showNodeDetails(d.id);
+                });
+
+            // Add labels
+            node.append('text')
+                .attr('dx', 15)
+                .attr('dy', '.35em')
+                .text(d => getNodeLabel(d))
+                .attr('fill', '#fff')
+                .attr('font-size', '12px')
+                .attr('pointer-events', 'none');
+
+            // Update simulation
+            simulation.on('tick', function() {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            simulation.alpha(1).restart();
+
+            // Update stats
+            updateStats();
+
+            // Update minimap
+            updateMinimap();
+        }
+
+        function updateStats() {
+            const stats = document.getElementById('stats');
+            stats.textContent = `Nodes: ${filteredNodes.length} | Edges: ${filteredLinks.length} | Total: ${nodes.length}/${links.length}`;
+        }
+
+        function updateMinimap() {
+            if (!filteredNodes.length) return;
+
+            minimapG.selectAll('*').remove();
+
+            const bounds = g.node().getBBox();
+            const fullWidth = bounds.width;
+            const fullHeight = bounds.height;
+            const midX = bounds.x + fullWidth / 2;
+            const midY = bounds.y + fullHeight / 2;
+
+            const scale = 0.8 / Math.max(fullWidth / 200, fullHeight / 150);
+            const translate = [100 - scale * midX, 75 - scale * midY];
+
+            minimapG.attr('transform', `translate(${translate[0]},${translate[1]}) scale(${scale})`);
+
+            // Add nodes to minimap
+            minimapG.selectAll('circle')
+                .data(filteredNodes)
+                .enter().append('circle')
+                .attr('cx', d => d.x)
+                .attr('cy', d => d.y)
+                .attr('r', 2)
+                .attr('fill', d => getNodeColor(d.type))
+                .attr('opacity', 0.7);
+
+            // Add viewport rectangle
+            const transform = d3.zoomTransform(svg.node());
+            const viewBounds = {
+                x: -transform.x / transform.k,
+                y: -transform.y / transform.k,
+                width: width / transform.k,
+                height: height / transform.k
+            };
+
+            minimapG.append('rect')
+                .attr('x', viewBounds.x)
+                .attr('y', viewBounds.y)
+                .attr('width', viewBounds.width)
+                .attr('height', viewBounds.height)
+                .attr('fill', 'none')
+                .attr('stroke', '#4fc3f7')
+                .attr('stroke-width', 1 / scale);
+        }
+
+        function handleSearch(event) {
+            const query = event.target.value.toLowerCase();
+            const results = document.getElementById('search-results');
+
+            if (!query) {
+                results.style.display = 'none';
+                return;
+            }
+
+            const matches = filteredNodes.filter(node =>
+                node.name.toLowerCase().includes(query) ||
+                node.path.toLowerCase().includes(query)
+            );
+
+            if (matches.length === 0) {
+                results.style.display = 'none';
+                return;
+            }
+
+            results.innerHTML = '';
+            matches.slice(0, 10).forEach(node => {
+                const item = document.createElement('div');
+                item.className = 'search-result-item';
+                item.textContent = `${node.name} (${node.type})`;
+                item.onclick = () => {
+                    focusOnNode(node.id);
+                    results.style.display = 'none';
+                    document.getElementById('search').value = '';
+                };
+                results.appendChild(item);
+            });
+
+            results.style.display = 'block';
+        }
+
+        function focusOnNode(nodeId) {
+            const node = filteredNodes.find(n => n.id === nodeId);
+            if (!node) return;
+
+            const transform = d3.zoomIdentity
+                .translate(width / 2 - node.x, height / 2 - node.y)
+                .scale(1);
+
+            svg.transition().duration(750).call(zoom.transform, transform);
+        }
+
+        async function showNodeDetails(nodeId) {
+            try {
+                const graphId = document.getElementById('graph-select').value;
+                const response = await fetch(`/api/v1/graph/${graphId}/node/${nodeId}?include_code=true`);
+                const data = await response.json();
+
+                const details = document.getElementById('node-details');
+                const content = document.getElementById('node-content');
+
+                const node = data.node;
+                const dependencies = data.edges.outgoing.map(e => e.target);
+                const dependents = data.edges.incoming.map(e => e.source);
+
+                content.innerHTML = `
+                    <h4>${node.name}</h4>
+                    <p><strong>Type:</strong> ${node.type}</p>
+                    ${node.path ? `<p><strong>Path:</strong> <span class="clickable" onclick="openFile('${node.path}')">${node.path}</span></p>` : ''}
+                    ${node.docstring ? `<h5>Docstring:</h5><p>${node.docstring}</p>` : ''}
+                    ${node.lines ? `<p><strong>Lines:</strong> ${node.lines[0]}-${node.lines[1]}</p>` : ''}
+
+                    <h5>Dependencies (${dependencies.length}):</h5>
+                    <ul>
+                        ${dependencies.slice(0, 10).map(dep => `<li>${getNodeName(dep)}</li>`).join('')}
+                        ${dependencies.length > 10 ? `<li>... and ${dependencies.length - 10} more</li>` : ''}
+                    </ul>
+
+                    <h5>Dependents (${dependents.length}):</h5>
+                    <ul>
+                        ${dependents.slice(0, 10).map(dep => `<li>${getNodeName(dep)}</li>`).join('')}
+                        ${dependents.length > 10 ? `<li>... and ${dependents.length - 10} more</li>` : ''}
+                    </ul>
+
+                    ${node.code ? `<h5>Code Preview:</h5><pre><code class="language-python">${escapeHtml(node.code.slice(0, 500))}</code></pre>` : ''}
+                `;
+
+                // Highlight code
+                Prism.highlightAll();
+
+                details.style.display = 'block';
+            } catch (error) {
+                console.error('Failed to load node details:', error);
+            }
+        }
+
+        function getNodeName(nodeId) {
+            const node = nodes.find(n => n.id === nodeId);
+            return node ? node.name : nodeId;
+        }
+
+        function openFile(filePath) {
+            // For web interface, we can't directly open files
+            // In a real implementation, this might open in an editor or show file content
+            console.log('Open file:', filePath);
+        }
+
+        function closeNodeDetails() {
+            document.getElementById('node-details').style.display = 'none';
+        }
+
+        function resetView() {
+            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+        }
+
+        function getNodeColor(type) {
+            const colors = {
+                'file': '#4CAF50',
+                'class': '#2196F3',
+                'function': '#FF9800'
+            };
+            return colors[type] || '#757575';
+        }
+
+        function getEdgeColor(type) {
+            const colors = {
+                'IMPORTS': '#4CAF50',
+                'CALLS': '#2196F3',
+                'EXTENDS': '#FF9800'
+            };
+            return colors[type] || '#757575';
+        }
+
+        function getNodeRadius(node) {
+            // Size based on connections
+            const connections = filteredLinks.filter(l => l.source.id === node.id || l.target.id === node.id).length;
+            return Math.max(5, Math.min(15, 5 + Math.sqrt(connections)));
+        }
+
+        function getNodeLabel(node) {
+            // Truncate long names
+            return node.name.length > 20 ? node.name.substring(0, 17) + '...' : node.name;
+        }
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            const container = document.querySelector('.graph-container');
+            width = container.clientWidth;
+            height = container.clientHeight;
+
+            svg.attr('width', width).attr('height', height);
+            simulation.force('center', d3.forceCenter(width / 2, height / 2));
+            simulation.alpha(1).restart();
+        });
+    </script>
+</body>
+</html>
+    """
+
+
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 @limiter.limit("10/minute")
 async def analyze(request: AnalyzeRequest):
@@ -436,7 +1100,7 @@ async def get_graph(
 
 
 @app.get("/api/v1/graph/{graph_id}/node/{node_id}", response_model=NodeResponse)
-async def get_node(graph_id: str, node_id: str):
+async def get_node(graph_id: str, node_id: str, include_code: bool = False):
     """Get information about a specific node."""
     graph = storage.load_graph(graph_id)
     if not graph:
@@ -454,10 +1118,41 @@ async def get_node(graph_id: str, node_id: str):
     # Convert node to dict
     node_data = node.model_dump()
 
+    # Add code if requested and available
+    if include_code and node.path:
+        try:
+            repo_path = Path(graph.repository.path)
+            file_path = repo_path / node.path
+            if file_path.exists() and file_path.is_file():
+                with file_path.open("r", encoding="utf-8") as f:
+                    node_data["code"] = f.read()
+        except Exception as e:
+            logger.warning(f"Failed to read code for {node.path}: {e}")
+
     # Add signature field for functions
-    if node.type == "function" and hasattr(node, 'signature'):
+    if node.type == "function":
         # Try to extract signature from docstring or code if available
-        node_data["signature"] = f"def {node.name}(...)"  # Placeholder
+        if node_data.get("code"):
+            # Simple signature extraction - could be improved
+            try:
+                import ast
+                tree = ast.parse(node_data["code"])
+                for item in ast.walk(tree):
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == node.name:
+                        # Extract function signature
+                        args = []
+                        for arg in item.args.args:
+                            args.append(arg.arg)
+                        if item.args.vararg:
+                            args.append(f"*{item.args.vararg.arg}")
+                        if item.args.kwarg:
+                            args.append(f"**{item.args.kwarg.arg}")
+                        node_data["signature"] = f"def {node.name}({', '.join(args)})"
+                        break
+            except:
+                pass
+        if "signature" not in node_data:
+            node_data["signature"] = f"def {node.name}(...)"  # Placeholder
 
     edges_data = {
         "incoming": [{"source": e.source, "type": e.type.value} for e in incoming],
@@ -816,3 +1511,481 @@ async def delete_graph(graph_id: str):
         raise HTTPException(status_code=404, detail="Graph not found")
 
     return DeleteGraphResponse(deleted=True, graph_id=graph_id)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the main graph visualization page."""
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Codex Aura - Code Dependency Graph</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1e1e1e; color: #ffffff; overflow: hidden; }
+        .header { position: absolute; top: 0; left: 0; right: 0; height: 50px; background: #2d2d2d; border-bottom: 1px solid #404040; display: flex; align-items: center; padding: 0 20px; z-index: 1000; }
+        .header h1 { margin: 0; font-size: 18px; color: #ffffff; }
+        .controls { position: absolute; top: 60px; left: 20px; background: #2d2d2d; border: 1px solid #404040; border-radius: 8px; padding: 15px; min-width: 250px; z-index: 100; }
+        .control-group { margin-bottom: 15px; }
+        .control-group label { display: block; margin-bottom: 5px; font-weight: bold; color: #cccccc; }
+        .control-group select, .control-group input { width: 100%; padding: 5px; background: #1e1e1e; border: 1px solid #404040; border-radius: 4px; color: #ffffff; }
+        .graph-container { position: absolute; top: 50px; left: 0; right: 0; bottom: 0; }
+        .node-details { position: absolute; top: 60px; right: 20px; width: 350px; background: #2d2d2d; border: 1px solid #404040; border-radius: 8px; padding: 15px; max-height: calc(100vh - 100px); overflow-y: auto; z-index: 100; display: none; }
+        .node-details h3 { margin-top: 0; color: #ffffff; }
+        .node-details .close-btn { position: absolute; top: 10px; right: 10px; background: none; border: none; color: #cccccc; font-size: 18px; cursor: pointer; }
+        .clickable { cursor: pointer; color: #4fc3f7; text-decoration: underline; }
+        .clickable:hover { color: #29b6f6; }
+        pre { background: #1e1e1e; padding: 10px; border-radius: 4px; overflow-x: auto; border: 1px solid #404040; }
+        code { font-family: 'Fira Code', 'Courier New', monospace; }
+        .stats { position: absolute; bottom: 20px; left: 20px; background: #2d2d2d; border: 1px solid #404040; border-radius: 8px; padding: 10px; font-size: 12px; z-index: 100; }
+        .minimap { position: absolute; bottom: 20px; right: 20px; width: 200px; height: 150px; background: #2d2d2d; border: 1px solid #404040; border-radius: 8px; overflow: hidden; z-index: 100; }
+        .minimap svg { width: 100%; height: 100%; }
+        .search-results { position: absolute; top: 100px; left: 20px; background: #2d2d2d; border: 1px solid #404040; border-radius: 8px; max-height: 200px; overflow-y: auto; z-index: 100; display: none; }
+        .search-result-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #404040; }
+        .search-result-item:hover { background: #404040; }
+        .search-result-item:last-child { border-bottom: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Codex Aura - Code Dependency Graph</h1>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="graph-select">Graph:</label>
+            <select id="graph-select">
+                <option value="">Select a graph...</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="node-filter">Node Types:</label>
+            <select id="node-filter" multiple>
+                <option value="file" selected>File</option>
+                <option value="class" selected>Class</option>
+                <option value="function" selected>Function</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="edge-filter">Edge Types:</label>
+            <select id="edge-filter" multiple>
+                <option value="IMPORTS" selected>Imports</option>
+                <option value="CALLS" selected>Calls</option>
+                <option value="EXTENDS" selected>Extends</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="search">Search Nodes:</label>
+            <input type="text" id="search" placeholder="Search...">
+        </div>
+
+        <button onclick="resetView()">Reset View</button>
+    </div>
+
+    <div class="graph-container">
+        <svg id="graph-svg"></svg>
+    </div>
+
+    <div class="node-details" id="node-details">
+        <button class="close-btn" onclick="closeNodeDetails()">&times;</button>
+        <h3>Node Details</h3>
+        <div id="node-content">
+            <p>Select a node to view details</p>
+        </div>
+    </div>
+
+    <div class="stats" id="stats">
+        Nodes: 0 | Edges: 0 | Filtered: 0
+    </div>
+
+    <div class="minimap" id="minimap">
+        <svg id="minimap-svg"></svg>
+    </div>
+
+    <div class="search-results" id="search-results"></div>
+
+    <script>
+        let currentGraph = null;
+        let svg, g, zoom, simulation;
+        let nodes = [], links = [];
+        let filteredNodes = [], filteredLinks = [];
+        let width, height;
+        let minimapSvg, minimapG;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeGraph();
+            loadGraphs();
+        });
+
+        function initializeGraph() {
+            const container = document.querySelector('.graph-container');
+            width = container.clientWidth;
+            height = container.clientHeight;
+
+            svg = d3.select('#graph-svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            g = svg.append('g');
+
+            zoom = d3.zoom()
+                .scaleExtent([0.1, 4])
+                .on('zoom', function(event) {
+                    g.attr('transform', event.transform);
+                    updateMinimap();
+                });
+
+            svg.call(zoom);
+
+            simulation = d3.forceSimulation()
+                .force('link', d3.forceLink().id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(20));
+
+            minimapSvg = d3.select('#minimap-svg')
+                .attr('width', 200)
+                .attr('height', 150);
+
+            minimapG = minimapSvg.append('g');
+
+            document.getElementById('graph-select').addEventListener('change', loadSelectedGraph);
+            document.getElementById('node-filter').addEventListener('change', applyFilters);
+            document.getElementById('edge-filter').addEventListener('change', applyFilters);
+            document.getElementById('search').addEventListener('input', handleSearch);
+        }
+
+        async function loadGraphs() {
+            try {
+                const response = await fetch('/api/v1/graphs');
+                const data = await response.json();
+
+                const select = document.getElementById('graph-select');
+                data.graphs.forEach(graph => {
+                    const option = document.createElement('option');
+                    option.value = graph.id;
+                    option.textContent = `${graph.repo_name} (${graph.node_count} nodes, ${graph.edge_count} edges)`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load graphs:', error);
+            }
+        }
+
+        async function loadSelectedGraph() {
+            const graphId = document.getElementById('graph-select').value;
+            if (!graphId) return;
+
+            try {
+                const response = await fetch(`/api/v1/graph/${graphId}`);
+                currentGraph = await response.json();
+
+                nodes = currentGraph.nodes;
+                links = currentGraph.edges;
+
+                applyFilters();
+            } catch (error) {
+                console.error('Failed to load graph:', error);
+            }
+        }
+
+        function applyFilters() {
+            const nodeTypes = Array.from(document.getElementById('node-filter').selectedOptions).map(o => o.value);
+            const edgeTypes = Array.from(document.getElementById('edge-filter').selectedOptions).map(o => o.value);
+
+            filteredNodes = nodes.filter(node => nodeTypes.includes(node.type));
+            filteredLinks = links.filter(link =>
+                edgeTypes.includes(link.type) &&
+                filteredNodes.some(n => n.id === link.source) &&
+                filteredNodes.some(n => n.id === link.target)
+            );
+
+            updateGraph();
+        }
+
+        function updateGraph() {
+            g.selectAll('*').remove();
+
+            simulation.nodes(filteredNodes);
+            simulation.force('link').links(filteredLinks);
+
+            const link = g.append('g')
+                .attr('class', 'links')
+                .selectAll('line')
+                .data(filteredLinks)
+                .enter().append('line')
+                .attr('stroke', d => getEdgeColor(d.type))
+                .attr('stroke-width', 2)
+                .attr('stroke-opacity', 0.6);
+
+            const node = g.append('g')
+                .attr('class', 'nodes')
+                .selectAll('g')
+                .data(filteredNodes)
+                .enter().append('g')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+
+            node.append('circle')
+                .attr('r', d => getNodeRadius(d))
+                .attr('fill', d => getNodeColor(d.type))
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 2)
+                .on('click', function(event, d) {
+                    event.stopPropagation();
+                    showNodeDetails(d.id);
+                });
+
+            node.append('text')
+                .attr('dx', 15)
+                .attr('dy', '.35em')
+                .text(d => getNodeLabel(d))
+                .attr('fill', '#fff')
+                .attr('font-size', '12px')
+                .attr('pointer-events', 'none');
+
+            simulation.on('tick', function() {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            simulation.alpha(1).restart();
+
+            updateStats();
+            updateMinimap();
+        }
+
+        function updateStats() {
+            const stats = document.getElementById('stats');
+            stats.textContent = `Nodes: ${filteredNodes.length} | Edges: ${filteredLinks.length} | Total: ${nodes.length}/${links.length}`;
+        }
+
+        function updateMinimap() {
+            if (!filteredNodes.length) return;
+
+            minimapG.selectAll('*').remove();
+
+            const bounds = g.node().getBBox();
+            const fullWidth = bounds.width;
+            const fullHeight = bounds.height;
+            const midX = bounds.x + fullWidth / 2;
+            const midY = bounds.y + fullHeight / 2;
+
+            const scale = 0.8 / Math.max(fullWidth / 200, fullHeight / 150);
+            const translate = [100 - scale * midX, 75 - scale * midY];
+
+            minimapG.attr('transform', `translate(${translate[0]},${translate[1]}) scale(${scale})`);
+
+            minimapG.selectAll('circle')
+                .data(filteredNodes)
+                .enter().append('circle')
+                .attr('cx', d => d.x)
+                .attr('cy', d => d.y)
+                .attr('r', 2)
+                .attr('fill', d => getNodeColor(d.type))
+                .attr('opacity', 0.7);
+
+            const transform = d3.zoomTransform(svg.node());
+            const viewBounds = {
+                x: -transform.x / transform.k,
+                y: -transform.y / transform.k,
+                width: width / transform.k,
+                height: height / transform.k
+            };
+
+            minimapG.append('rect')
+                .attr('x', viewBounds.x)
+                .attr('y', viewBounds.y)
+                .attr('width', viewBounds.width)
+                .attr('height', viewBounds.height)
+                .attr('fill', 'none')
+                .attr('stroke', '#4fc3f7')
+                .attr('stroke-width', 1 / scale);
+        }
+
+        function handleSearch(event) {
+            const query = event.target.value.toLowerCase();
+            const results = document.getElementById('search-results');
+
+            if (!query) {
+                results.style.display = 'none';
+                return;
+            }
+
+            const matches = filteredNodes.filter(node =>
+                node.name.toLowerCase().includes(query) ||
+                node.path.toLowerCase().includes(query)
+            );
+
+            if (matches.length === 0) {
+                results.style.display = 'none';
+                return;
+            }
+
+            results.innerHTML = '';
+            matches.slice(0, 10).forEach(node => {
+                const item = document.createElement('div');
+                item.className = 'search-result-item';
+                item.textContent = `${node.name} (${node.type})`;
+                item.onclick = () => {
+                    focusOnNode(node.id);
+                    results.style.display = 'none';
+                    document.getElementById('search').value = '';
+                };
+                results.appendChild(item);
+            });
+
+            results.style.display = 'block';
+        }
+
+        function focusOnNode(nodeId) {
+            const node = filteredNodes.find(n => n.id === nodeId);
+            if (!node) return;
+
+            const transform = d3.zoomIdentity
+                .translate(width / 2 - node.x, height / 2 - node.y)
+                .scale(1);
+
+            svg.transition().duration(750).call(zoom.transform, transform);
+        }
+
+        async function showNodeDetails(nodeId) {
+            try {
+                const graphId = document.getElementById('graph-select').value;
+                const response = await fetch(`/api/v1/graph/${graphId}/node/${nodeId}?include_code=true`);
+                const data = await response.json();
+
+                const details = document.getElementById('node-details');
+                const content = document.getElementById('node-content');
+
+                const node = data.node;
+                const dependencies = data.edges.outgoing.map(e => e.target);
+                const dependents = data.edges.incoming.map(e => e.source);
+
+                content.innerHTML = `
+                    <h4>${node.name}</h4>
+                    <p><strong>Type:</strong> ${node.type}</p>
+                    ${node.path ? `<p><strong>Path:</strong> <span class="clickable" onclick="openFile('${node.path}')">${node.path}</span></p>` : ''}
+                    ${node.docstring ? `<h5>Docstring:</h5><p>${node.docstring}</p>` : ''}
+                    ${node.lines ? `<p><strong>Lines:</strong> ${node.lines[0]}-${node.lines[1]}</p>` : ''}
+
+                    <h5>Dependencies (${dependencies.length}):</h5>
+                    <ul>
+                        ${dependencies.slice(0, 10).map(dep => `<li>${getNodeName(dep)}</li>`).join('')}
+                        ${dependencies.length > 10 ? `<li>... and ${dependencies.length - 10} more</li>` : ''}
+                    </ul>
+
+                    <h5>Dependents (${dependents.length}):</h5>
+                    <ul>
+                        ${dependents.slice(0, 10).map(dep => `<li>${getNodeName(dep)}</li>`).join('')}
+                        ${dependents.length > 10 ? `<li>... and ${dependents.length - 10} more</li>` : ''}
+                    </ul>
+
+                    ${node.code ? `<h5>Code Preview:</h5><pre><code class="language-python">${escapeHtml(node.code)}</code></pre>` : ''}
+                `;
+
+                Prism.highlightAll();
+
+                details.style.display = 'block';
+            } catch (error) {
+                console.error('Failed to load node details:', error);
+            }
+        }
+
+        function getNodeName(nodeId) {
+            const node = nodes.find(n => n.id === nodeId);
+            return node ? node.name : nodeId;
+        }
+
+        function openFile(filePath) {
+            console.log('Open file:', filePath);
+        }
+
+        function closeNodeDetails() {
+            document.getElementById('node-details').style.display = 'none';
+        }
+
+        function resetView() {
+            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+        }
+
+        function getNodeColor(type) {
+            const colors = {
+                'file': '#4CAF50',
+                'class': '#2196F3',
+                'function': '#FF9800'
+            };
+            return colors[type] || '#757575';
+        }
+
+        function getEdgeColor(type) {
+            const colors = {
+                'IMPORTS': '#4CAF50',
+                'CALLS': '#2196F3',
+                'EXTENDS': '#FF9800'
+            };
+            return colors[type] || '#757575';
+        }
+
+        function getNodeRadius(node) {
+            const connections = filteredLinks.filter(l => l.source.id === node.id || l.target.id === node.id).length;
+            return Math.max(5, Math.min(15, 5 + Math.sqrt(connections)));
+        }
+
+        function getNodeLabel(node) {
+            return node.name.length > 20 ? node.name.substring(0, 17) + '...' : node.name;
+        }
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        window.addEventListener('resize', function() {
+            const container = document.querySelector('.graph-container');
+            width = container.clientWidth;
+            height = container.clientHeight;
+
+            svg.attr('width', width).attr('height', height);
+            simulation.force('center', d3.forceCenter(width / 2, height / 2));
+            simulation.alpha(1).restart();
+        });
+    </script>
+</body>
+</html>
+    """
