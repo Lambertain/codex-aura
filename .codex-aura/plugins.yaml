@@ -1,0 +1,17 @@
+plugins:
+  context:
+    default: "basic"
+    fallback: "basic"
+
+  impact:
+    default: "basic"
+
+  analyzers:
+    python: "codex_aura.plugins.builtin.python"
+    # Future:
+    # typescript: "codex_aura.plugins.builtin.typescript"
+
+# Для premium (загружается если установлен codex-aura-premium)
+premium:
+  context: "codex_aura_premium.semantic"
+  impact: "codex_aura_premium.impact_advanced"
