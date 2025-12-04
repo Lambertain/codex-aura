@@ -1,7 +1,8 @@
 """Configuration parser with Pydantic validation."""
 
+import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from pydantic import BaseModel, Field
@@ -58,6 +59,14 @@ class PluginSettings(BaseModel):
     analyzers: dict = Field(default_factory=lambda: {"python": "codex_aura.plugins.builtin.python"})
 
 
+class ConfigSource:
+    """Configuration source tracking."""
+
+    def __init__(self, name: str, data: Dict[str, Any]):
+        self.name = name
+        self.data = data
+
+
 class ProjectConfig(BaseModel):
     """Main project configuration."""
 
@@ -69,13 +78,107 @@ class ProjectConfig(BaseModel):
     plugins: PluginSettings = Field(default_factory=PluginSettings)
 
 
-def load_config(repo_path: Path) -> ProjectConfig:
-    """Load configuration from .codex-aura/config.yaml or return defaults."""
-    config_path = repo_path / ".codex-aura" / "config.yaml"
+def _parse_env_vars() -> Dict[str, Any]:
+    """Parse CODEX_AURA_* environment variables."""
+    env_config = {}
+    prefix = "CODEX_AURA_"
 
+    for key, value in os.environ.items():
+        if key.startswith(prefix):
+            # Remove prefix and convert to lowercase with underscores
+            config_key = key[len(prefix):].lower()
+
+            # Handle nested keys with double underscores
+            if "__" in config_key:
+                parts = config_key.split("__")
+                if len(parts) == 2:
+                    section, field = parts
+                    if section not in env_config:
+                        env_config[section] = {}
+                    env_config[section][field] = _parse_env_value(value)
+            else:
+                env_config[config_key] = _parse_env_value(value)
+
+    return env_config
+
+
+def _parse_env_value(value: str) -> Any:
+    """Parse environment variable value to appropriate type."""
+    # Handle comma-separated lists
+    if "," in value:
+        return [item.strip() for item in value.split(",")]
+
+    # Handle booleans
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+
+    # Handle numbers
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        pass
+
+    # Return as string
+    return value
+
+
+def _merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge multiple config dictionaries with later ones taking precedence."""
+    result = {}
+
+    for config in configs:
+        _deep_merge(result, config)
+
+    return result
+
+
+def _deep_merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    """Deep merge source into target."""
+    for key, value in source.items():
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
+
+
+def load_config(repo_path: Path, cli_overrides: Optional[Dict[str, Any]] = None) -> Tuple[ProjectConfig, List[ConfigSource]]:
+    """Load configuration with inheritance: defaults < config.yaml < env vars < CLI args."""
+    sources = []
+
+    # 1. Built-in defaults
+    defaults = ProjectConfig().model_dump()
+    sources.append(ConfigSource("defaults", defaults))
+
+    # 2. Config file
+    config_path = repo_path / ".codex-aura" / "config.yaml"
+    file_config = {}
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return ProjectConfig(**data)
+            file_config = yaml.safe_load(f) or {}
+        sources.append(ConfigSource("config.yaml", file_config))
 
-    return ProjectConfig()  # defaults
+    # 3. Environment variables
+    env_config = _parse_env_vars()
+    if env_config:
+        sources.append(ConfigSource("environment", env_config))
+
+    # 4. CLI overrides
+    cli_config = cli_overrides or {}
+    if cli_config:
+        sources.append(ConfigSource("cli", cli_config))
+
+    # Merge all configs in priority order
+    merged_config = _merge_configs(defaults, file_config, env_config, cli_config)
+
+    # Create final config
+    config = ProjectConfig(**merged_config)
+
+    return config, sources
+
+
+def load_config_simple(repo_path: Path, cli_overrides: Optional[Dict[str, Any]] = None) -> ProjectConfig:
+    """Load configuration (backwards compatibility)."""
+    config, _ = load_config(repo_path, cli_overrides)
+    return config

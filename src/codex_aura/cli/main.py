@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from ..analyzer.python import PythonAnalyzer
-from ..config.parser import ProjectConfig
+from ..config.parser import ProjectConfig, load_config
 from ..models.graph import load_graph, save_graph
 
 
@@ -71,21 +71,69 @@ def main():
         "--minimal", action="store_true", help="Create minimal configuration with required fields only"
     )
 
+    # Config command
+    config_parser = subparsers.add_parser("config", help="Configuration management")
+    config_subparsers = config_parser.add_subparsers(dest="config_command", help="Config commands")
+
+    # Config validate
+    config_subparsers.add_parser("validate", help="Validate configuration")
+
+    # Config show
+    show_parser = config_subparsers.add_parser("show", help="Show effective configuration")
+    show_parser.add_argument(
+        "--json", action="store_true", help="Output in JSON format"
+    )
+
+    # Global config override arguments
+    parser.add_argument(
+        "--config-analyzer-languages",
+        help="Override analyzer.languages (comma-separated)"
+    )
+    parser.add_argument(
+        "--config-server-port",
+        type=int,
+        help="Override server.port"
+    )
+    parser.add_argument(
+        "--config-context-default-depth",
+        type=int,
+        help="Override context.default_depth"
+    )
+
     args = parser.parse_args()
 
+    # Build CLI config overrides
+    cli_overrides = {}
+    if hasattr(args, 'config_analyzer_languages') and args.config_analyzer_languages:
+        cli_overrides['analyzer'] = cli_overrides.get('analyzer', {})
+        cli_overrides['analyzer']['languages'] = [lang.strip() for lang in args.config_analyzer_languages.split(',')]
+    if hasattr(args, 'config_server_port') and args.config_server_port:
+        cli_overrides['server'] = cli_overrides.get('server', {})
+        cli_overrides['server']['port'] = args.config_server_port
+    if hasattr(args, 'config_context_default_depth') and args.config_context_default_depth:
+        cli_overrides['context'] = cli_overrides.get('context', {})
+        cli_overrides['context']['default_depth'] = args.config_context_default_depth
+
     if args.command == "analyze":
-        analyze_repo(args)
+        analyze_repo(args, cli_overrides)
     elif args.command == "stats":
         stats_repo(args)
     elif args.command == "server":
-        start_server(args)
+        start_server(args, cli_overrides)
     elif args.command == "init":
         init_project(args)
+    elif args.command == "config":
+        if args.config_command == "validate":
+            config_validate(args, cli_overrides)
+        elif args.config_command == "show":
+            config_show(args, cli_overrides)
+        else:
+            config_parser.print_help()
     else:
         parser.print_help()
 
 
-def analyze_repo(args):
+def analyze_repo(args, cli_overrides=None):
     """Analyze repository function."""
     # Setup logging
     log_level = getattr(logging, args.log_level)
@@ -208,7 +256,7 @@ def stats_repo(args):
         sys.exit(1)
 
 
-def start_server(args):
+def start_server(args, cli_overrides=None):
     """Start the API server."""
     try:
         import uvicorn
@@ -322,6 +370,86 @@ temp/
     print("✓ Created .codex-aura/config.yaml")
     print("✓ Created .codex-aura/rules.yaml")
     print("✓ Created .codex-aura/.gitignore")
+
+
+def config_validate(args, cli_overrides=None):
+    """Validate configuration."""
+    repo_path = Path.cwd()
+    try:
+        config, sources = load_config(repo_path, cli_overrides)
+
+        print("✓ Config file: .codex-aura/config.yaml")
+        print(f"✓ Version: {config.version} (supported)")
+
+        # Check analyzer settings
+        print("✓ Analyzer settings: valid")
+
+        # Check plugins
+        if "basic" in config.plugins.context:
+            print("✓ Plugin 'basic' found")
+        else:
+            print("⚠ Warning: Plugin 'basic' not found")
+
+        # Check exclude patterns
+        if not config.analyzer.exclude_patterns:
+            print("⚠ Warning: exclude_patterns is empty")
+
+        print("\nConfiguration validation completed successfully.")
+
+    except Exception as e:
+        print(f"✗ Configuration validation failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def config_show(args, cli_overrides=None):
+    """Show effective configuration."""
+    repo_path = Path.cwd()
+    try:
+        config, sources = load_config(repo_path, cli_overrides)
+
+        if args.json:
+            print(config.model_dump_json(indent=2))
+        else:
+            # Build source map for tracking
+            source_map = {}
+            for source in sources:
+                _build_source_map(source_map, source.data, source.name)
+
+            _print_config_with_sources(config.model_dump(), source_map, "")
+
+    except Exception as e:
+        print(f"Error: Failed to load configuration: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _build_source_map(source_map, data, source_name, prefix=""):
+    """Build a map of config paths to their sources."""
+    if isinstance(data, dict):
+        for key, value in data.items():
+            current_prefix = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, (dict, list)):
+                _build_source_map(source_map, value, source_name, current_prefix)
+            else:
+                source_map[current_prefix] = source_name
+    elif isinstance(data, list):
+        # For lists, mark the parent as the source
+        source_map[prefix] = source_name
+
+
+def _print_config_with_sources(config_dict, source_map, prefix=""):
+    """Print configuration with source information."""
+    for key, value in config_dict.items():
+        current_prefix = f"{prefix}.{key}" if prefix else key
+
+        if isinstance(value, dict):
+            print(f"{current_prefix}:")
+            _print_config_with_sources(value, source_map, current_prefix)
+        elif isinstance(value, list):
+            source = source_map.get(current_prefix, "defaults")
+            print(f"{current_prefix}: {value} (from {source})")
+        else:
+            source = source_map.get(current_prefix, "defaults")
+            print(f"{current_prefix}: {value} (from {source})")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """Configuration module."""
 
-from .parser import ProjectConfig, load_config
+from .parser import ConfigSource, ProjectConfig, load_config, load_config_simple
 
-__all__ = ["ProjectConfig", "load_config"]
+__all__ = ["ConfigSource", "ProjectConfig", "load_config", "load_config_simple"]
