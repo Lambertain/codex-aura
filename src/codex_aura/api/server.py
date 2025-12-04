@@ -4,12 +4,13 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field, constr
 
 from ..analyzer.python import PythonAnalyzer
 from ..models.graph import Graph, save_graph
 from ..storage.sqlite import SQLiteStorage
 from ..plugins.registry import PluginRegistry
+from ..models.edge import EdgeType
 from collections import deque
 
 app = FastAPI(
@@ -29,13 +30,72 @@ app = FastAPI(
 # Initialize storage
 storage = SQLiteStorage()
 
+# Allowed roots for path traversal protection
+ALLOWED_ROOTS = [
+    Path.home(),
+    Path("/tmp"),
+    # Add more as needed
+]
+
+
+def validate_repo_path(path: str) -> Path:
+    """Validate repository path with whitelist approach for path traversal protection.
+
+    Args:
+        path: The path string to validate
+
+    Returns:
+        Resolved Path object if valid
+
+    Raises:
+        SecurityError: If path is not in allowed directories
+    """
+    resolved = Path(path).resolve()
+
+    # Check against allowed roots
+    is_allowed = any(
+        resolved.is_relative_to(root)
+        for root in ALLOWED_ROOTS
+    )
+
+    if not is_allowed:
+        raise ValueError(f"Path not in allowed directories: {path}")
+
+    return resolved
+
 
 class AnalyzeRequest(BaseModel):
     """Request model for analyze endpoint."""
 
-    repo_path: str = "."
-    edge_types: list[str] = ["imports", "calls", "extends"]
+    repo_path: constr(max_length=1000) = "."
+    edge_types: list[EdgeType] = Field(max_items=10, default=["imports", "calls", "extends"])
     options: dict = {}
+
+    @field_validator("repo_path")
+    @classmethod
+    def validate_path(cls, v: str) -> str:
+        """Validate repository path for security."""
+        path = Path(v).resolve()
+
+        # No path traversal
+        if ".." in str(path):
+            raise ValueError("Path traversal not allowed")
+
+        # Must exist
+        if not path.exists():
+            raise ValueError(f"Path does not exist: {path}")
+
+        # Must be directory
+        if not path.is_dir():
+            raise ValueError("Path must be a directory")
+
+        # Additional security check with whitelist
+        try:
+            validate_repo_path(str(path))
+        except Exception as e:
+            raise ValueError(f"Security validation failed: {str(e)}")
+
+        return str(path)
 
     class Config:
         json_schema_extra = {
@@ -227,12 +287,8 @@ async def analyze(request: AnalyzeRequest):
 
     start_time = time.time()
 
-    # Validate repo path
+    # Repo path is already validated by Pydantic model
     repo_path = Path(request.repo_path)
-    if not repo_path.exists():
-        raise HTTPException(status_code=400, detail="Repository path does not exist")
-    if not repo_path.is_dir():
-        raise HTTPException(status_code=400, detail="Path is not a directory")
 
     try:
         # Analyze repository
