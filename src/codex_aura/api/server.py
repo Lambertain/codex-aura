@@ -3,8 +3,14 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator, Field, constr
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..analyzer.python import PythonAnalyzer
 from ..models.graph import Graph, save_graph
@@ -30,12 +36,45 @@ app = FastAPI(
 # Initialize storage
 storage = SQLiteStorage()
 
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+# Add middleware
+app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
+
+# Rate limit exceeded handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": "Rate limit exceeded", "retry_after": exc.retry_after}
+    )
+
 # Allowed roots for path traversal protection
 ALLOWED_ROOTS = [
     Path.home(),
     Path("/tmp"),
     # Add more as needed
 ]
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Middleware to limit request size."""
+
+    def __init__(self, app, max_size: int = 10 * 1024 * 1024):  # 10MB
+        super().__init__(app)
+        self.max_size = max_size
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > self.max_size:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "Request too large"}
+            )
+        return await call_next(request)
 
 
 def validate_repo_path(path: str) -> Path:
@@ -266,6 +305,7 @@ async def info():
 
 
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
+@limiter.limit("10/minute")
 async def analyze(request: AnalyzeRequest):
     """
     Analyze a repository and generate a dependency graph.
@@ -513,6 +553,7 @@ async def get_dependencies(
 
 
 @app.post("/api/v1/context", response_model=ContextResponse)
+@limiter.limit("60/minute")
 async def get_context(request: ContextRequest):
     """
     Get contextual nodes around entry points.

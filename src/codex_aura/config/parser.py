@@ -49,6 +49,12 @@ class ServerSettings(BaseModel):
     cors_origins: List[str] = Field(default_factory=lambda: ["*"])
     workers: int = 1
     log_level: str = "INFO"
+    rate_limits: dict = Field(default_factory=lambda: {
+        "analyze": "10/minute",
+        "context": "60/minute",
+        "default": "100/minute"
+    })
+    request_size_limit: int = 10 * 1024 * 1024  # 10MB
 
 
 class PluginSettings(BaseModel):
