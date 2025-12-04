@@ -1,8 +1,21 @@
 """Data models for representing code structure nodes."""
 
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, field_validator
+
+
+class BlameInfo(BaseModel):
+    """Git blame information for a file.
+
+    Contains authorship information extracted from git blame,
+    including the primary author, list of contributors, and
+    distribution of authorship across the file.
+    """
+
+    primary_author: str
+    contributors: List[str]
+    author_distribution: Dict[str, int]
 
 
 class Node(BaseModel):
@@ -25,6 +38,7 @@ class Node(BaseModel):
     path: str
     lines: Optional[List[int]] = None
     docstring: Optional[str] = None
+    blame: Optional[BlameInfo] = None
 
     @field_validator("lines")
     @classmethod

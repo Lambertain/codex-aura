@@ -9,7 +9,7 @@ from ..models.edge import Edge, EdgeType
 from ..models.graph import Graph, Repository, Stats
 from ..models.node import Node
 from .base import BaseAnalyzer
-from .utils import find_python_files
+from .utils import find_python_files, get_file_blame, load_ignore_patterns
 
 logger = logging.getLogger("codex_aura")
 
@@ -47,7 +47,9 @@ class PythonAnalyzer(BaseAnalyzer):
         """
         logger.info(f"Starting analysis of repository: {repo_path}")
 
-        python_files = find_python_files(repo_path)
+        # Load ignore patterns
+        ignore_patterns = load_ignore_patterns(repo_path)
+        python_files = find_python_files(repo_path, ignore_patterns)
         all_files = set(python_files)
         logger.info(f"Found {len(python_files)} Python files to analyze")
 
@@ -130,12 +132,14 @@ class PythonAnalyzer(BaseAnalyzer):
     def _create_file_node_only(self, file_path: Path, repo_root: Path) -> Node:
         """Create a file node without parsing content."""
         relative_path = file_path.relative_to(repo_root)
+        blame_info = get_file_blame(file_path, repo_root)
         return Node(
             id=str(relative_path),
             type="file",
             name=file_path.name,
             path=str(relative_path),
             docstring=None,
+            blame=blame_info,
         )
 
     def analyze_file(
@@ -224,7 +228,7 @@ def parse_file_node(file_path: Path, repo_root: Path) -> Node:
     """Create a file node from a Python file.
 
     Extracts the file's docstring by parsing its AST and creates a Node
-    representing the file in the dependency graph.
+    representing the file in the dependency graph. Also includes git blame info.
 
     Args:
         file_path: Path to the Python file.
@@ -244,23 +248,29 @@ def parse_file_node(file_path: Path, repo_root: Path) -> Node:
         # Calculate relative path
         relative_path = file_path.relative_to(repo_root)
 
+        # Get git blame information
+        blame_info = get_file_blame(file_path, repo_root)
+
         return Node(
             id=str(relative_path),
             type="file",
             name=file_path.name,
             path=str(relative_path),
             docstring=docstring,
+            blame=blame_info,
         )
     except SyntaxError as e:
         logger.warning(f"Syntax error in {file_path}: {e}")
         # Still create node but without docstring
         relative_path = file_path.relative_to(repo_root)
+        blame_info = get_file_blame(file_path, repo_root)
         return Node(
             id=str(relative_path),
             type="file",
             name=file_path.name,
             path=str(relative_path),
             docstring=None,
+            blame=blame_info,
         )
     except Exception as e:
         logger.error(f"Failed to parse {file_path}: {e}")
