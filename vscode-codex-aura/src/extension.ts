@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { GraphViewProvider } from './views/graphView';
+import { NodeViewProvider } from './views/nodeView';
 import { registerCommands } from './commands/commands';
+
+let graphViewProvider: GraphViewProvider;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Codex Aura extension is now active!');
@@ -9,19 +12,20 @@ export function activate(context: vscode.ExtensionContext) {
   registerCommands(context);
 
   // Register WebView provider for graph visualization
-  const graphViewProvider = new GraphViewProvider(context.extensionUri);
+  graphViewProvider = new GraphViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(GraphViewProvider.viewType, graphViewProvider)
   );
 
   // Register panel for node details
+  const nodeViewProvider = new NodeViewProvider(context.extensionUri);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('codexAura.nodeView', {
-      resolveWebviewView(webviewView: vscode.WebviewView) {
-        webviewView.webview.html = getNodeViewHtml(webviewView.webview);
-      }
-    })
+    vscode.window.registerWebviewViewProvider(NodeViewProvider.viewType, nodeViewProvider)
   );
+}
+
+export function getGraphViewProvider(): GraphViewProvider {
+  return graphViewProvider;
 }
 
 function getNodeViewHtml(webview: vscode.Webview): string {

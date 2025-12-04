@@ -61,6 +61,10 @@ class GraphViewProvider {
             }
         }, undefined, []);
     }
+    async loadGraphById(graphId) {
+        this.currentGraphId = graphId;
+        await this.loadGraph(graphId);
+    }
     async loadGraph(graphId) {
         try {
             const graph = await this.client.getGraph(graphId);
@@ -75,7 +79,10 @@ class GraphViewProvider {
     }
     showNodeDetails(nodeId) {
         // This will be handled by the node view provider
-        vscode.commands.executeCommand('codexAura.showNodeDetails', nodeId);
+        vscode.commands.executeCommand('codexAura.showNodeDetails', nodeId, this.currentGraphId);
+    }
+    setCurrentGraphId(graphId) {
+        this.currentGraphId = graphId;
     }
     _getHtmlForWebview(webview) {
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'graph.js'));

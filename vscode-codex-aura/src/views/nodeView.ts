@@ -34,6 +34,9 @@ export class NodeViewProvider implements vscode.WebviewViewProvider {
           case 'showNodeDetails':
             await this.showNodeDetails(message.nodeId);
             break;
+          case 'openFile':
+            await this.openFile(message.filePath);
+            break;
         }
       },
       undefined,
@@ -41,14 +44,15 @@ export class NodeViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  public async showNodeDetails(nodeId: string) {
-    if (!this.currentGraphId) {
+  public async showNodeDetails(nodeId: string, graphId?: string) {
+    const graphIdToUse = graphId || this.currentGraphId;
+    if (!graphIdToUse) {
       vscode.window.showErrorMessage('No graph selected');
       return;
     }
 
     try {
-      const nodeDetails = await this.client.getNode(this.currentGraphId, nodeId);
+      const nodeDetails = await this.client.getNode(graphIdToUse, nodeId);
       this._view?.webview.postMessage({
         command: 'updateNodeDetails',
         nodeDetails: nodeDetails
@@ -62,6 +66,16 @@ export class NodeViewProvider implements vscode.WebviewViewProvider {
     this.currentGraphId = graphId;
   }
 
+  private async openFile(filePath: string) {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(uri);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+    }
+  }
+
   private _getHtmlForWebview(webview: vscode.Webview) {
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'graph.css'));
     const nonce = getNonce();
@@ -73,7 +87,17 @@ export class NodeViewProvider implements vscode.WebviewViewProvider {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link href="${styleUri}" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js" nonce="${nonce}"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js" nonce="${nonce}"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js" nonce="${nonce}"></script>
         <title>Node Details</title>
+        <style>
+          .clickable { cursor: pointer; color: #007acc; text-decoration: underline; }
+          .clickable:hover { color: #005999; }
+          pre { background: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
+          code { font-family: 'Courier New', monospace; }
+        </style>
       </head>
       <body>
         <div id="node-details">
@@ -96,21 +120,41 @@ export class NodeViewProvider implements vscode.WebviewViewProvider {
 
           function updateNodeDetails(nodeDetails) {
             const content = document.getElementById('node-content');
+            const name = nodeDetails.properties?.name || nodeDetails.label;
+            const type = nodeDetails.type;
+            const path = nodeDetails.properties?.path || nodeDetails.path;
+            const docstring = nodeDetails.properties?.docstring || nodeDetails.docstring;
+            const signature = nodeDetails.properties?.signature || nodeDetails.signature;
+            const code = nodeDetails.properties?.code || nodeDetails.code;
+
             content.innerHTML = \`
-              <h4>\${nodeDetails.label}</h4>
-              <p><strong>Type:</strong> \${nodeDetails.type}</p>
-              <p><strong>ID:</strong> \${nodeDetails.id}</p>
-              <h5>Properties:</h5>
-              <pre>\${JSON.stringify(nodeDetails.properties, null, 2)}</pre>
+              <h4>\${name}</h4>
+              <p><strong>Type:</strong> \${type}</p>
+              \${path ? \`<p><strong>Path:</strong> <span class="clickable" onclick="openFile('\${path}')">\${path}</span></p>\` : ''}
+              \${docstring ? \`<h5>Docstring:</h5><p>\${docstring}</p>\` : ''}
+              \${signature ? \`<h5>Signature:</h5><pre><code class="language-python">\${signature}</code></pre>\` : ''}
               <h5>Dependencies:</h5>
               <ul>
                 \${nodeDetails.dependencies.map(dep => \`<li>\${dep}</li>\`).join('')}
               </ul>
-              <h5>Dependents:</h5>
-              <ul>
-                \${nodeDetails.dependents.map(dep => \`<li>\${dep}</li>\`).join('')}
-              </ul>
+              \${code ? \`<h5>Code:</h5><pre><code class="language-python">\${escapeHtml(code)}</code></pre>\` : ''}
             \`;
+
+            // Re-run Prism highlighting
+            Prism.highlightAll();
+          }
+
+          function openFile(filePath) {
+            vscode.postMessage({
+              command: 'openFile',
+              filePath: filePath
+            });
+          }
+
+          function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
           }
         </script>
       </body>

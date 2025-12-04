@@ -36,32 +36,44 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCommands = registerCommands;
 const vscode = __importStar(require("vscode"));
 const client_1 = require("../api/client");
+const extension_1 = require("../extension");
 function registerCommands(context) {
     const config = vscode.workspace.getConfiguration('codexAura');
     const serverUrl = config.get('serverUrl', 'http://localhost:8000');
     const client = new client_1.CodexAuraClient(serverUrl);
     // Command to show graph
-    const showGraphCommand = vscode.commands.registerCommand('codexAura.showGraph', async () => {
+    const showGraphCommand = vscode.commands.registerCommand('codexAura.showGraph', async (graphId) => {
         try {
-            const graphs = await client.getGraphs();
-            if (graphs.length === 0) {
-                vscode.window.showInformationMessage('No graphs available');
-                return;
+            let selectedGraphId = graphId;
+            if (!selectedGraphId) {
+                const graphs = await client.getGraphs();
+                if (graphs.length === 0) {
+                    vscode.window.showInformationMessage('No graphs available');
+                    return;
+                }
+                const graphItems = graphs.map(graph => ({
+                    label: graph.name,
+                    description: `ID: ${graph.id}`,
+                    graph: graph
+                }));
+                const selectedGraph = await vscode.window.showQuickPick(graphItems, {
+                    placeHolder: 'Select a graph to visualize'
+                });
+                if (selectedGraph) {
+                    selectedGraphId = selectedGraph.graph.id;
+                }
+                else {
+                    return;
+                }
             }
-            const graphItems = graphs.map(graph => ({
-                label: graph.name,
-                description: `ID: ${graph.id}`,
-                graph: graph
-            }));
-            const selectedGraph = await vscode.window.showQuickPick(graphItems, {
-                placeHolder: 'Select a graph to visualize'
-            });
-            if (selectedGraph) {
-                // Open the graph view
-                await vscode.commands.executeCommand('workbench.view.extension.codexAura-graph');
-                // Send message to load the graph
-                // This would need to be handled by the view provider
+            // Open the graph view
+            await vscode.commands.executeCommand('workbench.view.extension.codexAura-graph');
+            // Load the graph
+            const graphViewProvider = (0, extension_1.getGraphViewProvider)();
+            if (graphViewProvider) {
+                await graphViewProvider.loadGraphById(selectedGraphId);
             }
+            // For now, we'll need to modify the graph view to accept the graphId
         }
         catch (error) {
             vscode.window.showErrorMessage(`Failed to load graphs: ${error}`);
@@ -74,22 +86,42 @@ function registerCommands(context) {
             vscode.window.showErrorMessage('No workspace folder open');
             return;
         }
-        vscode.window.showInformationMessage('Analyzing workspace...');
-        try {
-            // This would call the analysis API
-            // For now, just show a placeholder
-            vscode.window.showInformationMessage('Workspace analysis completed');
-        }
-        catch (error) {
-            vscode.window.showErrorMessage(`Analysis failed: ${error}`);
-        }
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Analyzing codebase...",
+            cancellable: false
+        }, async (progress) => {
+            try {
+                const result = await client.analyze(workspaceFolder.uri.fsPath);
+                vscode.commands.executeCommand('codexAura.showGraph', result.graph_id);
+            }
+            catch (error) {
+                vscode.window.showErrorMessage(`Analysis failed: ${error}`);
+            }
+        });
     });
     // Command to show node details (internal use)
-    const showNodeDetailsCommand = vscode.commands.registerCommand('codexAura.showNodeDetails', async (nodeId) => {
+    const showNodeDetailsCommand = vscode.commands.registerCommand('codexAura.showNodeDetails', async (nodeId, graphId) => {
         // This command is called from the graph view
         // The node view provider will handle showing the details
         await vscode.commands.executeCommand('workbench.view.extension.codexAura-node');
+        // TODO: Pass graphId to node view provider
     });
-    context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand);
+    // Command to show dependencies for a file
+    const showDependenciesCommand = vscode.commands.registerCommand('codexAura.showDependencies', async (uri) => {
+        // TODO: Implement showing dependencies for the file
+        vscode.window.showInformationMessage(`Show dependencies for ${uri.fsPath}`);
+    });
+    // Command to show function dependencies
+    const showFunctionDependenciesCommand = vscode.commands.registerCommand('codexAura.showFunctionDependencies', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('No active editor');
+            return;
+        }
+        // TODO: Get function at cursor and show its dependencies
+        vscode.window.showInformationMessage('Show function dependencies');
+    });
+    context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand);
 }
 //# sourceMappingURL=commands.js.map

@@ -43,6 +43,11 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  public async loadGraphById(graphId: string) {
+    this.currentGraphId = graphId;
+    await this.loadGraph(graphId);
+  }
+
   private async loadGraph(graphId: string) {
     try {
       const graph = await this.client.getGraph(graphId);
@@ -57,7 +62,13 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 
   private showNodeDetails(nodeId: string) {
     // This will be handled by the node view provider
-    vscode.commands.executeCommand('codexAura.showNodeDetails', nodeId);
+    vscode.commands.executeCommand('codexAura.showNodeDetails', nodeId, this.currentGraphId);
+  }
+
+  private currentGraphId?: string;
+
+  public setCurrentGraphId(graphId: string) {
+    this.currentGraphId = graphId;
   }
 
   private _getHtmlForWebview(webview: vscode.Webview) {

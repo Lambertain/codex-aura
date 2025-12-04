@@ -26,6 +26,10 @@ export interface NodeDetails {
   properties: Record<string, any>;
   dependencies: string[];
   dependents: string[];
+  path?: string;
+  docstring?: string;
+  signature?: string;
+  code?: string;
 }
 
 export interface SubGraph {
@@ -70,5 +74,19 @@ export class CodexAuraClient {
       throw new Error(`Failed to fetch dependencies for node ${nodeId}: ${response.statusText}`);
     }
     return response.json() as Promise<SubGraph>;
+  }
+
+  async analyze(path: string): Promise<{ graph_id: string }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ path }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to analyze workspace: ${response.statusText}`);
+    }
+    return response.json() as Promise<{ graph_id: string }>;
   }
 }

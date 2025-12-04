@@ -10,8 +10,26 @@
   "contributes": {
     "commands": [
       {"command": "codexAura.showGraph", "title": "Show Code Graph"},
-      {"command": "codexAura.analyze", "title": "Analyze Workspace"}
+      {"command": "codexAura.analyze", "title": "Analyze Workspace"},
+      {"command": "codexAura.showDependencies", "title": "Show Dependencies"},
+      {"command": "codexAura.showFunctionDependencies", "title": "Show Function Dependencies"}
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "codexAura.showDependencies",
+          "when": "resourceExtname =~ /\\.(py|js|ts|java|cpp|c)$/",
+          "group": "7_modification"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "codexAura.showFunctionDependencies",
+          "when": "editorTextFocus",
+          "group": "7_modification"
+        }
+      ]
+    },
     "configuration": {
       "title": "Codex Aura",
       "properties": {

@@ -33,6 +33,19 @@ class CodexAuraClient {
         }
         return response.json();
     }
+    async analyze(path) {
+        const response = await fetch(`${this.baseUrl}/api/v1/analyze`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path }),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to analyze workspace: ${response.statusText}`);
+        }
+        return response.json();
+    }
 }
 exports.CodexAuraClient = CodexAuraClient;
 //# sourceMappingURL=client.js.map
