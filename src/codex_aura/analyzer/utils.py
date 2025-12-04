@@ -8,7 +8,7 @@ from typing import List
 from pathspec import PathSpec
 
 from ..config import load_config_simple
-from ..models.git import ChangeFrequency, GitInfo
+from ..models.git import ChangeFrequency, ChangedFiles, GitInfo
 from ..models.node import BlameInfo
 
 logger = logging.getLogger(__name__)
@@ -292,4 +292,122 @@ def get_git_info(repo_path: Path) -> GitInfo | None:
 
     except Exception as e:
         logger.warning(f"Error getting git info for {repo_path}: {e}")
+        return None
+
+
+def get_changed_files(
+    repo_path: Path,
+    from_sha: str,
+    to_sha: str = "HEAD"
+) -> ChangedFiles | None:
+    """Get list of files changed between two commits.
+
+    Runs git diff --name-status to determine which files were added, modified,
+    or deleted between the specified commits. Handles renamed files correctly.
+
+    Args:
+        repo_path: Path to the repository root.
+        from_sha: Starting commit SHA.
+        to_sha: Ending commit SHA (default: HEAD).
+
+    Returns:
+        ChangedFiles object with lists of added, modified, and deleted files,
+        or None if not a git repo or error.
+    """
+    try:
+        # Check if we're in a git repository
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Not a git repository: {repo_path}")
+            return None
+
+        # Run git diff --name-status
+        result = subprocess.run(
+            ["git", "diff", "--name-status", from_sha, to_sha],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            logger.warning(f"Git diff failed between {from_sha} and {to_sha}: {result.stderr}")
+            return None
+
+        added, modified, deleted = [], [], []
+
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+
+            # Handle renamed files (R\told_path\tnew_path)
+            if line.startswith("R"):
+                parts = line.split("\t")
+                if len(parts) >= 3:
+                    # For renamed files, treat as modified (both old and new paths)
+                    old_path = parts[1]
+                    new_path = parts[2]
+                    modified.append(old_path)
+                    modified.append(new_path)
+                else:
+                    logger.warning(f"Invalid renamed file format: {line}")
+            else:
+                parts = line.split("\t", 1)
+                if len(parts) == 2:
+                    status, path = parts
+                    if status == "A":
+                        added.append(path)
+                    elif status == "M":
+                        modified.append(path)
+                    elif status == "D":
+                        deleted.append(path)
+                    # Ignore other status codes (C for copied, etc.)
+
+        return ChangedFiles(added=added, modified=modified, deleted=deleted)
+
+    except Exception as e:
+        logger.warning(f"Error getting changed files for {repo_path}: {e}")
+        return None
+
+
+def get_current_sha(repo_path: Path) -> str | None:
+    """Get the current commit SHA of the repository.
+
+    Args:
+        repo_path: Path to the repository root.
+
+    Returns:
+        Current commit SHA as string, or None if not a git repo or error.
+    """
+    try:
+        # Check if we're in a git repository
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Not a git repository: {repo_path}")
+            return None
+
+        # Get current SHA
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.warning(f"Failed to get current SHA: {result.stderr}")
+            return None
+
+        return result.stdout.strip()
+
+    except Exception as e:
+        logger.warning(f"Error getting current SHA for {repo_path}: {e}")
         return None

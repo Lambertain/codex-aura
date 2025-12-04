@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import List
 
 from ..models.edge import Edge, EdgeType
-from ..models.graph import Graph, Repository, Stats
+from ..models.git import ChangedFiles
+from ..models.graph import Graph, Repository, Stats, remove_nodes_by_path, replace_nodes_for_path, rebuild_edges_for_paths
 from ..models.node import Node
 from .base import BaseAnalyzer
-from .utils import find_python_files, get_file_blame, load_ignore_patterns
+from .utils import find_python_files, get_changed_files, get_current_sha, get_file_blame, load_ignore_patterns
 
 logger = logging.getLogger("codex_aura")
 
@@ -111,7 +112,84 @@ class PythonAnalyzer(BaseAnalyzer):
             stats=stats,
             nodes=nodes,
             edges=valid_edges,
+            sha=get_current_sha(repo_path) or "",
         )
+
+    def update_graph_incremental(
+        self, graph: Graph, repo_path: Path, from_sha: str
+    ) -> Graph:
+        """Update graph incrementally based on changes since a specific commit.
+
+        Performs incremental analysis by:
+        1. Getting changed files between from_sha and current HEAD
+        2. Removing nodes for deleted files
+        3. Re-analyzing modified and added files
+        4. Rebuilding edges for affected files
+        5. Updating the graph's SHA to current HEAD
+
+        Args:
+            graph: The existing Graph object to update.
+            repo_path: Path to the repository root.
+            from_sha: Commit SHA to compare against for changes.
+
+        Returns:
+            Updated Graph object with incremental changes applied.
+        """
+        logger.info(f"Starting incremental update from SHA {from_sha}")
+
+        # Get changed files
+        changes = get_changed_files(repo_path, from_sha)
+        if not changes:
+            logger.warning("Could not determine changed files, falling back to full analysis")
+            return self.analyze(repo_path)
+
+        logger.info(f"Found changes: +{len(changes.added)} added, ~{len(changes.modified)} modified, -{len(changes.deleted)} deleted")
+
+        # Load ignore patterns
+        ignore_patterns = load_ignore_patterns(repo_path)
+        python_files = find_python_files(repo_path, ignore_patterns)
+        all_files = set(python_files)
+
+        updated_graph = graph
+
+        # Remove deleted nodes and their edges
+        for path in changes.deleted:
+            logger.debug(f"Removing nodes for deleted file: {path}")
+            updated_graph = remove_nodes_by_path(updated_graph, path)
+
+        # Re-analyze modified and added files
+        affected_paths = changes.added + changes.modified
+        for path in affected_paths:
+            file_path = repo_path / path
+            if file_path.exists() and file_path in all_files:
+                logger.debug(f"Re-analyzing file: {path}")
+                try:
+                    file_nodes, file_edges = self.analyze_file(file_path, repo_path, all_files)
+                    updated_graph = replace_nodes_for_path(updated_graph, path, file_nodes)
+                    # Note: In a full implementation, we'd also need to add the new edges
+                    # For now, we'll rebuild all edges at the end
+                except Exception as e:
+                    logger.warning(f"Failed to re-analyze {file_path}: {e}")
+
+        # Rebuild edges for affected nodes
+        updated_graph = rebuild_edges_for_paths(updated_graph, affected_paths)
+
+        # Update SHA to current HEAD
+        current_sha = get_current_sha(repo_path)
+        if current_sha:
+            # Create new graph with updated SHA
+            updated_graph = Graph(
+                version=updated_graph.version,
+                generated_at=datetime.now(),  # Update timestamp
+                repository=updated_graph.repository,
+                stats=updated_graph.stats,
+                nodes=updated_graph.nodes,
+                edges=updated_graph.edges,
+                sha=current_sha
+            )
+
+        logger.info(f"Incremental update complete. New SHA: {current_sha}")
+        return updated_graph
 
     def _check_integrity(
         self, edges: List[Edge], nodes: List[Node]

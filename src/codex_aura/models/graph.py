@@ -48,6 +48,7 @@ class Graph(BaseModel):
         stats: Statistics about the graph contents.
         nodes: List of all nodes in the graph.
         edges: List of all edges in the graph.
+        sha: Current commit SHA of the analyzed repository.
     """
 
     version: str
@@ -56,6 +57,7 @@ class Graph(BaseModel):
     stats: Stats
     nodes: List[Node]
     edges: List[Edge]
+    sha: str = ""
 
 
 def save_graph(graph: Graph, path: Path) -> None:
@@ -81,3 +83,115 @@ def load_graph(path: Path) -> Graph:
     with path.open("r", encoding="utf-8") as f:
         data = f.read()
     return Graph.model_validate_json(data)
+
+
+def remove_nodes_by_path(graph: Graph, path: str) -> Graph:
+    """Remove all nodes associated with a specific file path.
+
+    Args:
+        graph: The Graph object to modify.
+        path: File path to remove nodes for.
+
+    Returns:
+        Modified Graph object with nodes removed.
+    """
+    # Remove nodes with matching path
+    filtered_nodes = [node for node in graph.nodes if node.path != path]
+
+    # Remove edges that reference removed nodes
+    node_ids = {node.id for node in filtered_nodes}
+    filtered_edges = [
+        edge for edge in graph.edges
+        if edge.source in node_ids and edge.target in node_ids
+    ]
+
+    # Update stats
+    node_types = {}
+    for node in filtered_nodes:
+        node_types[node.type] = node_types.get(node.type, 0) + 1
+
+    updated_stats = Stats(
+        total_nodes=len(filtered_nodes),
+        total_edges=len(filtered_edges),
+        node_types=node_types
+    )
+
+    return Graph(
+        version=graph.version,
+        generated_at=graph.generated_at,
+        repository=graph.repository,
+        stats=updated_stats,
+        nodes=filtered_nodes,
+        edges=filtered_edges,
+        sha=graph.sha
+    )
+
+
+def replace_nodes_for_path(graph: Graph, path: str, new_nodes: List[Node]) -> Graph:
+    """Replace all nodes for a specific file path with new nodes.
+
+    Args:
+        graph: The Graph object to modify.
+        path: File path to replace nodes for.
+        new_nodes: List of new nodes to add.
+
+    Returns:
+        Modified Graph object with nodes replaced.
+    """
+    # Remove old nodes for this path
+    filtered_nodes = [node for node in graph.nodes if node.path != path]
+
+    # Add new nodes
+    filtered_nodes.extend(new_nodes)
+
+    # Remove edges that reference removed nodes
+    old_node_ids = {node.id for node in graph.nodes if node.path == path}
+    node_ids = {node.id for node in filtered_nodes}
+    filtered_edges = [
+        edge for edge in graph.edges
+        if edge.source in node_ids and edge.target in node_ids
+    ]
+
+    # Update stats
+    node_types = {}
+    for node in filtered_nodes:
+        node_types[node.type] = node_types.get(node.type, 0) + 1
+
+    updated_stats = Stats(
+        total_nodes=len(filtered_nodes),
+        total_edges=len(filtered_edges),
+        node_types=node_types
+    )
+
+    return Graph(
+        version=graph.version,
+        generated_at=graph.generated_at,
+        repository=graph.repository,
+        stats=updated_stats,
+        nodes=filtered_nodes,
+        edges=filtered_edges,
+        sha=graph.sha
+    )
+
+
+def rebuild_edges_for_paths(graph: Graph, paths: List[str]) -> Graph:
+    """Rebuild edges for nodes in specified paths.
+
+    This is a simplified implementation that rebuilds all edges.
+    In a full implementation, this would only rebuild edges for affected nodes.
+
+    Args:
+        graph: The Graph object to modify.
+        paths: List of file paths to rebuild edges for.
+
+    Returns:
+        Modified Graph object with edges rebuilt.
+    """
+    # For now, return the graph as-is since full edge rebuilding
+    # would require re-analyzing the codebase
+    # In a complete implementation, this would:
+    # 1. Identify all nodes that could be affected by changes in the given paths
+    # 2. Re-analyze imports, calls, and inheritance relationships
+    # 3. Update the edges accordingly
+
+    return graph

@@ -1,8 +1,25 @@
 """Data models for Git-related information."""
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
+
+
+class ChangedFiles(BaseModel):
+    """Represents the result of a git diff operation.
+
+    Contains lists of files that were added, modified, or deleted
+    between two commits.
+
+    Attributes:
+        added: List of paths to newly added files.
+        modified: List of paths to modified files.
+        deleted: List of paths to deleted files.
+    """
+
+    added: List[str]
+    modified: List[str]
+    deleted: List[str]
 
 
 class ChangeFrequency(BaseModel):
