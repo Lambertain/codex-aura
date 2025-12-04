@@ -12,7 +12,8 @@
       {"command": "codexAura.showGraph", "title": "Show Code Graph"},
       {"command": "codexAura.analyze", "title": "Analyze Workspace"},
       {"command": "codexAura.showDependencies", "title": "Show Dependencies"},
-      {"command": "codexAura.showFunctionDependencies", "title": "Show Function Dependencies"}
+      {"command": "codexAura.showFunctionDependencies", "title": "Show Function Dependencies"},
+      {"command": "codexAura.openSettings", "title": "Open Settings"}
     ],
     "menus": {
       "explorer/context": [

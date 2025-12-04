@@ -86,19 +86,23 @@ function registerCommands(context) {
             vscode.window.showErrorMessage('No workspace folder open');
             return;
         }
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: "Analyzing codebase...",
-            cancellable: false
-        }, async (progress) => {
-            try {
+        (0, extension_1.setAnalyzingStatus)(true);
+        try {
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "Analyzing codebase...",
+                cancellable: false
+            }, async (progress) => {
                 const result = await client.analyze(workspaceFolder.uri.fsPath);
                 vscode.commands.executeCommand('codexAura.showGraph', result.graph_id);
-            }
-            catch (error) {
-                vscode.window.showErrorMessage(`Analysis failed: ${error}`);
-            }
-        });
+            });
+        }
+        catch (error) {
+            vscode.window.showErrorMessage(`Analysis failed: ${error}`);
+        }
+        finally {
+            (0, extension_1.setAnalyzingStatus)(false);
+        }
     });
     // Command to show node details (internal use)
     const showNodeDetailsCommand = vscode.commands.registerCommand('codexAura.showNodeDetails', async (nodeId, graphId) => {
@@ -122,6 +126,10 @@ function registerCommands(context) {
         // TODO: Get function at cursor and show its dependencies
         vscode.window.showInformationMessage('Show function dependencies');
     });
-    context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand);
+    // Command to open settings
+    const openSettingsCommand = vscode.commands.registerCommand('codexAura.openSettings', () => {
+        vscode.commands.executeCommand('workbench.action.openSettings', '@ext:codex-aura');
+    });
+    context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand, openSettingsCommand);
 }
 //# sourceMappingURL=commands.js.map

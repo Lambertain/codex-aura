@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.setAnalyzingStatus = setAnalyzingStatus;
 exports.activate = activate;
 exports.getGraphViewProvider = getGraphViewProvider;
 exports.deactivate = deactivate;
@@ -40,9 +41,46 @@ const vscode = __importStar(require("vscode"));
 const graphView_1 = require("./views/graphView");
 const nodeView_1 = require("./views/nodeView");
 const commands_1 = require("./commands/commands");
+const client_1 = require("./api/client");
 let graphViewProvider;
+let statusBarItem;
+let client;
+let statusCheckInterval;
+let isAnalyzing = false;
+async function updateStatus() {
+    if (!statusBarItem)
+        return;
+    try {
+        if (isAnalyzing) {
+            statusBarItem.text = '$(sync~spin) Analyzing...';
+            statusBarItem.tooltip = 'Codex Aura is analyzing the codebase';
+            statusBarItem.backgroundColor = undefined;
+        }
+        else {
+            // Check server connection
+            await client.getGraphs();
+            statusBarItem.text = '$(database) Codex Aura: Ready';
+            statusBarItem.tooltip = 'Codex Aura server is connected and ready';
+            statusBarItem.backgroundColor = undefined;
+        }
+    }
+    catch (error) {
+        statusBarItem.text = '$(warning) Codex Aura: Not Connected';
+        statusBarItem.tooltip = `Codex Aura server is not available: ${error}`;
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    }
+    statusBarItem.show();
+}
+function setAnalyzingStatus(analyzing) {
+    isAnalyzing = analyzing;
+    updateStatus();
+}
 function activate(context) {
     console.log('Codex Aura extension is now active!');
+    // Initialize client
+    const config = vscode.workspace.getConfiguration('codexAura');
+    const serverUrl = config.get('serverUrl', 'http://localhost:8000');
+    client = new client_1.CodexAuraClient(serverUrl);
     // Register commands
     (0, commands_1.registerCommands)(context);
     // Register WebView provider for graph visualization
@@ -51,6 +89,23 @@ function activate(context) {
     // Register panel for node details
     const nodeViewProvider = new nodeView_1.NodeViewProvider(context.extensionUri);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(nodeView_1.NodeViewProvider.viewType, nodeViewProvider));
+    // Create status bar item
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.command = 'codexAura.openSettings';
+    context.subscriptions.push(statusBarItem);
+    // Start status checking
+    updateStatus();
+    statusCheckInterval = setInterval(updateStatus, 30000); // Check every 30 seconds
+    context.subscriptions.push({ dispose: () => clearInterval(statusCheckInterval) });
+    // Listen for configuration changes
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('codexAura.serverUrl')) {
+            const newConfig = vscode.workspace.getConfiguration('codexAura');
+            const newServerUrl = newConfig.get('serverUrl', 'http://localhost:8000');
+            client = new client_1.CodexAuraClient(newServerUrl);
+            updateStatus();
+        }
+    }));
 }
 function getGraphViewProvider() {
     return graphViewProvider;

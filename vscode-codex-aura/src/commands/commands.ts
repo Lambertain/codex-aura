@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CodexAuraClient } from '../api/client';
-import { getGraphViewProvider } from '../extension';
+import { getGraphViewProvider, setAnalyzingStatus } from '../extension';
 
 export function registerCommands(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('codexAura');
@@ -58,18 +58,21 @@ export function registerCommands(context: vscode.ExtensionContext) {
       return;
     }
 
-    await vscode.window.withProgress({
-      location: vscode.ProgressLocation.Notification,
-      title: "Analyzing codebase...",
-      cancellable: false
-    }, async (progress) => {
-      try {
+    setAnalyzingStatus(true);
+    try {
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Analyzing codebase...",
+        cancellable: false
+      }, async (progress) => {
         const result = await client.analyze(workspaceFolder.uri.fsPath);
         vscode.commands.executeCommand('codexAura.showGraph', result.graph_id);
-      } catch (error) {
-        vscode.window.showErrorMessage(`Analysis failed: ${error}`);
-      }
-    });
+      });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Analysis failed: ${error}`);
+    } finally {
+      setAnalyzingStatus(false);
+    }
   });
 
   // Command to show node details (internal use)
@@ -98,5 +101,10 @@ export function registerCommands(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage('Show function dependencies');
   });
 
-  context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand);
+  // Command to open settings
+  const openSettingsCommand = vscode.commands.registerCommand('codexAura.openSettings', () => {
+    vscode.commands.executeCommand('workbench.action.openSettings', '@ext:codex-aura');
+  });
+
+  context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand, openSettingsCommand);
 }
