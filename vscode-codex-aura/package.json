@@ -1,0 +1,41 @@
+{
+  "name": "codex-aura",
+  "displayName": "Codex Aura",
+  "description": "Code context visualization",
+  "version": "0.1.0",
+  "engines": {"vscode": "^1.85.0"},
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:codexAura.showGraph"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {"command": "codexAura.showGraph", "title": "Show Code Graph"},
+      {"command": "codexAura.analyze", "title": "Analyze Workspace"}
+    ],
+    "configuration": {
+      "title": "Codex Aura",
+      "properties": {
+        "codexAura.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8000"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "18.x",
+    "eslint": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "typescript": "^5.3.2"
+  }
+}
