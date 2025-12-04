@@ -1,0 +1,34 @@
+{
+  "file_node": {
+    "id": "file_main_py",
+    "type": "file",
+    "name": "main.py",
+    "path": "src/main.py",
+    "lines": [1, 25],
+    "docstring": "Main application entry point"
+  },
+  "class_node": {
+    "id": "class_UserService",
+    "type": "class",
+    "name": "UserService",
+    "path": "src/services/user.py",
+    "lines": [10, 45],
+    "docstring": "Service for user management operations"
+  },
+  "function_node": {
+    "id": "func_format_name",
+    "type": "function",
+    "name": "format_name",
+    "path": "src/utils.py",
+    "lines": [5, 8],
+    "docstring": "Format a name to title case"
+  },
+  "variable_node": {
+    "id": "var_DATABASE_URL",
+    "type": "variable",
+    "name": "DATABASE_URL",
+    "path": "src/config.py",
+    "lines": [3, 3],
+    "docstring": null
+  }
+}

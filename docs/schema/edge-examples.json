@@ -1,0 +1,47 @@
+[
+  {
+    "description": "Import relationship between files",
+    "edge": {
+      "source": "file_main_py",
+      "target": "file_utils_py",
+      "type": "IMPORTS",
+      "line": 1
+    }
+  },
+  {
+    "description": "Function call relationship",
+    "edge": {
+      "source": "func_main",
+      "target": "func_format_name",
+      "type": "CALLS",
+      "line": 10
+    }
+  },
+  {
+    "description": "Class inheritance",
+    "edge": {
+      "source": "class_UserService",
+      "target": "class_BaseService",
+      "type": "EXTENDS",
+      "line": 15
+    }
+  },
+  {
+    "description": "Interface implementation",
+    "edge": {
+      "source": "class_UserRepository",
+      "target": "class_IRepository",
+      "type": "IMPLEMENTS",
+      "line": 20
+    }
+  },
+  {
+    "description": "Variable usage",
+    "edge": {
+      "source": "func_connect_db",
+      "target": "var_DATABASE_URL",
+      "type": "USES",
+      "line": 25
+    }
+  }
+]

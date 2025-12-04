@@ -1,0 +1,142 @@
+{
+  "simple_project": {
+    "description": "Simple 3-file Python project",
+    "graph": {
+      "version": "0.1",
+      "generated_at": "2025-12-04T14:00:00Z",
+      "repository": {
+        "path": "/home/user/simple-project",
+        "name": "simple-project"
+      },
+      "stats": {
+        "total_nodes": 5,
+        "total_edges": 4,
+        "node_types": {
+          "file": 3,
+          "function": 2
+        }
+      },
+      "nodes": [
+        {
+          "id": "file_main_py",
+          "type": "file",
+          "name": "main.py",
+          "path": "main.py"
+        },
+        {
+          "id": "file_utils_py",
+          "type": "file",
+          "name": "utils.py",
+          "path": "utils.py"
+        },
+        {
+          "id": "file_config_py",
+          "type": "file",
+          "name": "config.py",
+          "path": "config.py"
+        },
+        {
+          "id": "func_format_name",
+          "type": "function",
+          "name": "format_name",
+          "path": "utils.py",
+          "lines": [5, 8]
+        },
+        {
+          "id": "func_calculate_total",
+          "type": "function",
+          "name": "calculate_total",
+          "path": "utils.py",
+          "lines": [10, 13]
+        }
+      ],
+      "edges": [
+        {
+          "source": "file_main_py",
+          "target": "file_utils_py",
+          "type": "IMPORTS",
+          "line": 1
+        },
+        {
+          "source": "file_main_py",
+          "target": "file_config_py",
+          "type": "IMPORTS",
+          "line": 2
+        },
+        {
+          "source": "file_main_py",
+          "target": "func_format_name",
+          "type": "CALLS",
+          "line": 8
+        },
+        {
+          "source": "file_main_py",
+          "target": "func_calculate_total",
+          "type": "CALLS",
+          "line": 9
+        }
+      ]
+    }
+  },
+  "class_inheritance": {
+    "description": "Project with class inheritance",
+    "graph": {
+      "version": "0.1",
+      "generated_at": "2025-12-04T14:15:00Z",
+      "repository": {
+        "path": "/home/user/oop-project",
+        "name": "oop-project"
+      },
+      "stats": {
+        "total_nodes": 4,
+        "total_edges": 2,
+        "node_types": {
+          "file": 2,
+          "class": 2
+        }
+      },
+      "nodes": [
+        {
+          "id": "file_services_py",
+          "type": "file",
+          "name": "services.py",
+          "path": "services.py"
+        },
+        {
+          "id": "file_models_py",
+          "type": "file",
+          "name": "models.py",
+          "path": "models.py"
+        },
+        {
+          "id": "class_BaseService",
+          "type": "class",
+          "name": "BaseService",
+          "path": "services.py",
+          "lines": [5, 15]
+        },
+        {
+          "id": "class_UserService",
+          "type": "class",
+          "name": "UserService",
+          "path": "services.py",
+          "lines": [18, 30]
+        }
+      ],
+      "edges": [
+        {
+          "source": "file_services_py",
+          "target": "file_models_py",
+          "type": "IMPORTS",
+          "line": 1
+        },
+        {
+          "source": "class_UserService",
+          "target": "class_BaseService",
+          "type": "EXTENDS",
+          "line": 18
+        }
+      ]
+    }
+  }
+}
