@@ -232,6 +232,7 @@ class CodexAura:
             # Simple context extraction (simplified version of server logic)
             context_nodes = []
             visited = set()
+            context_edges = []
 
             for entry_point in entry_points:
                 if entry_point not in visited:
@@ -251,8 +252,14 @@ class CodexAura:
                     for edge in graph.edges:
                         if edge.source == entry_point and edge.target not in visited:
                             connected_nodes.add(edge.target)
+                            # Add edge if both nodes are in context
+                            if edge.target in [n.id for n in context_nodes] or len(context_nodes) < 50:
+                                context_edges.append(edge)
                         elif edge.target == entry_point and edge.source not in visited:
                             connected_nodes.add(edge.source)
+                            # Add edge if both nodes are in context
+                            if edge.source in [n.id for n in context_nodes] or len(context_nodes) < 50:
+                                context_edges.append(edge)
 
                     for node_id in connected_nodes:
                         if len(context_nodes) >= 50:  # Limit
@@ -270,7 +277,8 @@ class CodexAura:
             return Context(
                 context_nodes=context_nodes,
                 total_nodes=len(visited),
-                truncated=len(context_nodes) >= 50
+                truncated=len(context_nodes) >= 50,
+                edges=context_edges if context_edges else None
             )
 
     def analyze_impact(self, changed_files: List[str], graph_id: Optional[str] = None) -> ImpactAnalysis:
