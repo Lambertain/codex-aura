@@ -1,0 +1,312 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codex-aura.dev/schema/config-v1.0.json",
+  "title": "Codex Aura Configuration Schema",
+  "description": "JSON Schema for Codex Aura configuration files",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Configuration version",
+      "default": "1.0",
+      "enum": ["1.0"]
+    },
+    "project": {
+      "type": "object",
+      "description": "Project metadata",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Project name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional project description"
+        },
+        "version": {
+          "type": "string",
+          "description": "Project version"
+        },
+        "language": {
+          "type": "string",
+          "description": "Primary programming language",
+          "enum": ["python", "javascript", "typescript", "java", "cpp", "csharp", "go", "rust", "php", "ruby"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "analyzer": {
+      "type": "object",
+      "description": "Code analysis configuration",
+      "properties": {
+        "languages": {
+          "type": "array",
+          "description": "Programming languages to analyze",
+          "items": {
+            "type": "string",
+            "enum": ["python", "javascript", "typescript", "java", "cpp", "csharp", "go", "rust", "php", "ruby"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "edge_types": {
+          "type": "array",
+          "description": "Types of relationships to analyze",
+          "items": {
+            "type": "string",
+            "enum": ["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "REFERENCES"]
+          },
+          "default": ["IMPORTS", "CALLS", "EXTENDS"],
+          "uniqueItems": true
+        },
+        "include_patterns": {
+          "type": "array",
+          "description": "File patterns to include in analysis",
+          "items": {
+            "type": "string"
+          },
+          "default": ["src/**/*.py", "lib/**/*.js", "src/**/*.ts", "src/**/*.java"]
+        },
+        "exclude_patterns": {
+          "type": "array",
+          "description": "File patterns to exclude from analysis",
+          "items": {
+            "type": "string"
+          },
+          "default": ["**/tests/**", "**/__pycache__/**", "**/node_modules/**", "**/.git/**", "**/build/**", "**/dist/**"]
+        },
+        "max_file_size": {
+          "type": "integer",
+          "description": "Maximum file size to analyze (in bytes)",
+          "default": 1048576,
+          "minimum": 1024
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Analysis timeout in seconds",
+          "default": 300,
+          "minimum": 10
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "description": "Context ranking configuration",
+      "properties": {
+        "default_depth": {
+          "type": "integer",
+          "description": "Default depth for context analysis",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "default_max_nodes": {
+          "type": "integer",
+          "description": "Default maximum number of nodes to return",
+          "default": 100,
+          "minimum": 10,
+          "maximum": 1000
+        },
+        "include_docstrings": {
+          "type": "boolean",
+          "description": "Include docstrings in context",
+          "default": true
+        },
+        "include_code": {
+          "type": "boolean",
+          "description": "Include code content in context",
+          "default": true
+        },
+        "include_comments": {
+          "type": "boolean",
+          "description": "Include comments in context",
+          "default": false
+        },
+        "max_tokens_per_node": {
+          "type": "integer",
+          "description": "Maximum tokens per node",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "server": {
+      "type": "object",
+      "description": "Server configuration",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Server host",
+          "default": "0.0.0.0",
+          "format": "ipv4"
+        },
+        "port": {
+          "type": "integer",
+          "description": "Server port",
+          "default": 8000,
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "cors_origins": {
+          "type": "array",
+          "description": "Allowed CORS origins",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "default": ["*"]
+        },
+        "workers": {
+          "type": "integer",
+          "description": "Number of worker processes",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 16
+        },
+        "log_level": {
+          "type": "string",
+          "description": "Logging level",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+          "default": "INFO"
+        }
+      },
+      "additionalProperties": false
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Plugin configuration",
+      "properties": {
+        "context": {
+          "type": "object",
+          "description": "Context plugin settings",
+          "properties": {
+            "default": {
+              "type": "string",
+              "description": "Default context plugin name",
+              "default": "basic"
+            },
+            "fallback": {
+              "type": "string",
+              "description": "Fallback context plugin name",
+              "default": "basic"
+            },
+            "config": {
+              "type": "object",
+              "description": "Plugin-specific configuration",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "impact": {
+          "type": "object",
+          "description": "Impact plugin settings",
+          "properties": {
+            "default": {
+              "type": "string",
+              "description": "Default impact plugin name",
+              "default": "basic"
+            },
+            "fallback": {
+              "type": "string",
+              "description": "Fallback impact plugin name",
+              "default": "basic"
+            },
+            "config": {
+              "type": "object",
+              "description": "Plugin-specific configuration",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "analyzers": {
+          "type": "object",
+          "description": "Language-specific analyzer plugins",
+          "patternProperties": {
+            "^[a-zA-Z]+$": {
+              "type": "string",
+              "description": "Analyzer plugin name for language"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "description": "Storage configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Storage backend type",
+          "enum": ["sqlite", "postgresql", "mongodb", "redis"],
+          "default": "sqlite"
+        },
+        "path": {
+          "type": "string",
+          "description": "Database file path (for SQLite)",
+          "default": "codex_aura.db"
+        },
+        "url": {
+          "type": "string",
+          "description": "Database connection URL (for other backends)",
+          "format": "uri"
+        },
+        "cache_enabled": {
+          "type": "boolean",
+          "description": "Enable caching",
+          "default": true
+        },
+        "cache_ttl": {
+          "type": "integer",
+          "description": "Cache TTL in seconds",
+          "default": 3600,
+          "minimum": 60
+        }
+      },
+      "additionalProperties": false
+    },
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Global log level",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+          "default": "INFO"
+        },
+        "format": {
+          "type": "string",
+          "description": "Log format string",
+          "default": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        },
+        "file": {
+          "type": "string",
+          "description": "Log file path",
+          "default": "codex_aura.log"
+        },
+        "max_size": {
+          "type": "integer",
+          "description": "Maximum log file size in MB",
+          "default": 10,
+          "minimum": 1
+        },
+        "backup_count": {
+          "type": "integer",
+          "description": "Number of backup log files",
+          "default": 5,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["version"],
+  "additionalProperties": false
+}

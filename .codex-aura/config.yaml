@@ -1,0 +1,59 @@
+version: "1.0"
+
+project:
+  name: "my-project"
+  description: "Example Codex Aura project"
+  language: "python"
+
+analyzer:
+  languages:
+    - python
+  edge_types:
+    - IMPORTS
+    - CALLS
+    - EXTENDS
+  include_patterns:
+    - "src/**/*.py"
+  exclude_patterns:
+    - "**/tests/**"
+    - "**/__pycache__/**"
+    - ".venv/**"
+    - "node_modules/**"
+
+context:
+  default_depth: 2
+  default_max_nodes: 100
+  include_docstrings: true
+  include_code: true
+  include_comments: false
+  max_tokens_per_node: 500
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["*"]
+  workers: 1
+  log_level: "INFO"
+
+plugins:
+  context:
+    default: "basic"
+    fallback: "basic"
+  impact:
+    default: "basic"
+    fallback: "basic"
+  analyzers:
+    python: "codex_aura.plugins.builtin.python"
+
+storage:
+  type: "sqlite"
+  path: "codex_aura.db"
+  cache_enabled: true
+  cache_ttl: 3600
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "codex_aura.log"
+  max_size: 10
+  backup_count: 5
