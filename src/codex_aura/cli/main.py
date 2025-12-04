@@ -8,7 +8,10 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 from ..analyzer.python import PythonAnalyzer
+from ..config.parser import ProjectConfig
 from ..models.graph import load_graph, save_graph
 
 
@@ -59,6 +62,15 @@ def main():
         "--port", type=int, default=8000, help="Port to bind server to (default: 8000)"
     )
 
+    # Init command
+    init_parser = subparsers.add_parser("init", help="Initialize a new Codex Aura project")
+    init_parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing configuration"
+    )
+    init_parser.add_argument(
+        "--minimal", action="store_true", help="Create minimal configuration with required fields only"
+    )
+
     args = parser.parse_args()
 
     if args.command == "analyze":
@@ -67,6 +79,8 @@ def main():
         stats_repo(args)
     elif args.command == "server":
         start_server(args)
+    elif args.command == "init":
+        init_project(args)
     else:
         parser.print_help()
 
@@ -217,6 +231,97 @@ def start_server(args):
     except Exception as e:
         print(f"Error: Failed to start server: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def init_project(args):
+    """Initialize a new Codex Aura project."""
+    repo_path = Path.cwd()
+
+    # Check if .codex-aura already exists
+    codex_dir = repo_path / ".codex-aura"
+    if codex_dir.exists() and not args.force:
+        print(f"Error: .codex-aura directory already exists. Use --force to overwrite.", file=sys.stderr)
+        sys.exit(1)
+
+    # Create directory
+    codex_dir.mkdir(exist_ok=True)
+
+    # Interactive mode if not minimal
+    config_data = {}
+    if not args.minimal:
+        print("Initializing Codex Aura project...")
+        print()
+
+        # Project settings
+        project_name = input("Project name [my-project]: ").strip() or "my-project"
+        project_desc = input("Project description [Codex Aura project]: ").strip() or "Codex Aura project"
+        primary_lang = input("Primary language [python]: ").strip() or "python"
+
+        # Analyzer settings
+        include_tests = input("Include tests in analysis? [y/N]: ").strip().lower()
+        include_tests = include_tests in ('y', 'yes')
+
+        config_data = {
+            "version": "1.0",
+            "project": {
+                "name": project_name,
+                "description": project_desc,
+                "language": primary_lang,
+            },
+            "analyzer": {
+                "languages": [primary_lang],
+                "include_patterns": ["src/**/*.py"] if primary_lang == "python" else ["src/**/*"],
+                "exclude_patterns": [
+                    "**/tests/**" if not include_tests else None,
+                    "**/__pycache__/**",
+                    ".venv/**",
+                    "node_modules/**"
+                ]
+            }
+        }
+        # Remove None values
+        config_data["analyzer"]["exclude_patterns"] = [p for p in config_data["analyzer"]["exclude_patterns"] if p is not None]
+    else:
+        # Minimal config
+        config_data = {
+            "version": "1.0",
+            "project": {
+                "name": "my-project",
+                "language": "python",
+            }
+        }
+
+    # Validate config
+    try:
+        config = ProjectConfig(**config_data)
+    except Exception as e:
+        print(f"Error: Invalid configuration: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Write config.yaml
+    config_path = codex_dir / "config.yaml"
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(config.model_dump(), f, default_flow_style=False, sort_keys=False)
+
+    # Write rules.yaml (empty for now)
+    rules_path = codex_dir / "rules.yaml"
+    with open(rules_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump({"rules": []}, f)
+
+    # Write .gitignore
+    gitignore_path = codex_dir / ".gitignore"
+    gitignore_content = """# Codex Aura cache and temporary files
+*.db
+*.log
+.cache/
+temp/
+"""
+    with open(gitignore_path, "w", encoding="utf-8") as f:
+        f.write(gitignore_content)
+
+    print("✓ Created .codex-aura/config.yaml")
+    print("✓ Created .codex-aura/rules.yaml")
+    print("✓ Created .codex-aura/.gitignore")
 
 
 if __name__ == "__main__":

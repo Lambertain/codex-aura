@@ -1,3 +1,20 @@
+[project]
+name = "codex-aura"
+version = "0.1.0"
+description = "Code context mapping for AI agents"
+authors = [{name = "Lambertain", email = "your.email@example.com"}]
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "pyyaml>=6.0"
+]
+
+[project.scripts]
+codex-aura = "codex_aura.cli.main:main"
+
 [tool.poetry]
 name = "codex-aura"
 version = "0.1.0"
@@ -10,6 +27,8 @@ python = "^3.11"
 python = "^3.11"
 fastapi = "^0.104.1"
 uvicorn = {extras = ["standard"], version = "^0.24.0"}
+pydantic = "^2.5.0"
+pyyaml = "^6.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
