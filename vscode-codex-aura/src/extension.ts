@@ -3,11 +3,14 @@ import { GraphViewProvider } from './views/graphView';
 import { NodeViewProvider } from './views/nodeView';
 import { registerCommands } from './commands/commands';
 import { CodexAuraClient } from './api/client';
+import { ImpactDecoratorProvider, HoverProvider } from './treeDecorators';
+import { InlineDecorationsProvider } from './decorations';
 
 let graphViewProvider: GraphViewProvider;
 let statusBarItem: vscode.StatusBarItem;
 let client: CodexAuraClient;
 let statusCheckInterval: NodeJS.Timeout;
+let updateTimeout: NodeJS.Timeout;
 let isAnalyzing = false;
 
 async function updateStatus() {
@@ -60,6 +63,40 @@ export function activate(context: vscode.ExtensionContext) {
   const nodeViewProvider = new NodeViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(NodeViewProvider.viewType, nodeViewProvider)
+  );
+
+  // Register tree decorators and hover providers
+  const impactDecorator = new ImpactDecoratorProvider(client);
+  const hoverProvider = new HoverProvider(client);
+  const inlineDecorations = new InlineDecorationsProvider(client);
+
+  context.subscriptions.push(
+    vscode.window.registerFileDecorationProvider(impactDecorator),
+    vscode.languages.registerHoverProvider({ scheme: 'file' }, hoverProvider),
+    inlineDecorations
+  );
+
+  // Update decorations when active editor changes
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+      if (editor) {
+        inlineDecorations.updateDecorations(editor);
+      }
+    })
+  );
+
+  // Update decorations when document changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(event => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && event.document === editor.document) {
+        // Debounce updates
+        clearTimeout(updateTimeout);
+        updateTimeout = setTimeout(() => {
+          inlineDecorations.updateDecorations(editor);
+        }, 500);
+      }
+    })
   );
 
   // Create status bar item

@@ -5,6 +5,9 @@ class CodexAuraClient {
     constructor(baseUrl) {
         this.baseUrl = baseUrl;
     }
+    getBaseUrl() {
+        return this.baseUrl;
+    }
     async getGraphs() {
         const response = await fetch(`${this.baseUrl}/api/v1/graphs`);
         if (!response.ok) {

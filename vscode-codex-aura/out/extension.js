@@ -42,10 +42,13 @@ const graphView_1 = require("./views/graphView");
 const nodeView_1 = require("./views/nodeView");
 const commands_1 = require("./commands/commands");
 const client_1 = require("./api/client");
+const treeDecorators_1 = require("./treeDecorators");
+const decorations_1 = require("./decorations");
 let graphViewProvider;
 let statusBarItem;
 let client;
 let statusCheckInterval;
+let updateTimeout;
 let isAnalyzing = false;
 async function updateStatus() {
     if (!statusBarItem)
@@ -89,6 +92,28 @@ function activate(context) {
     // Register panel for node details
     const nodeViewProvider = new nodeView_1.NodeViewProvider(context.extensionUri);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(nodeView_1.NodeViewProvider.viewType, nodeViewProvider));
+    // Register tree decorators and hover providers
+    const impactDecorator = new treeDecorators_1.ImpactDecoratorProvider(client);
+    const hoverProvider = new treeDecorators_1.HoverProvider(client);
+    const inlineDecorations = new decorations_1.InlineDecorationsProvider(client);
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(impactDecorator), vscode.languages.registerHoverProvider({ scheme: 'file' }, hoverProvider), inlineDecorations);
+    // Update decorations when active editor changes
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor) {
+            inlineDecorations.updateDecorations(editor);
+        }
+    }));
+    // Update decorations when document changes
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && event.document === editor.document) {
+            // Debounce updates
+            clearTimeout(updateTimeout);
+            updateTimeout = setTimeout(() => {
+                inlineDecorations.updateDecorations(editor);
+            }, 500);
+        }
+    }));
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.command = 'codexAura.openSettings';

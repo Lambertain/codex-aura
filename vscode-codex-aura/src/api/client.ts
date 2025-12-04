@@ -40,6 +40,10 @@ export interface SubGraph {
 export class CodexAuraClient {
   constructor(private baseUrl: string) {}
 
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
   async getGraphs(): Promise<Graph[]> {
     const response = await fetch(`${this.baseUrl}/api/v1/graphs`);
     if (!response.ok) {
