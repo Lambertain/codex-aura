@@ -121,6 +121,14 @@ pydoc codex_aura
    - Reference to any related issues
 6. **Wait** for review and address any feedback
 
+## Issue Templates
+
+We use GitHub issue templates to ensure consistent and complete bug reports and feature requests. When creating an issue, please use the appropriate template:
+
+- **Bug Report**: For reporting bugs and unexpected behavior
+- **Feature Request**: For proposing new features or enhancements
+- **Documentation**: For documentation improvements or corrections
+
 ## Reporting Issues
 
 When reporting bugs or requesting features:

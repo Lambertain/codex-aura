@@ -10,6 +10,8 @@ class EdgeType(str, Enum):
     """Types of relationships between nodes in the dependency graph."""
 
     IMPORTS = "IMPORTS"
+    CALLS = "CALLS"
+    EXTENDS = "EXTENDS"
 
 
 class Edge(BaseModel):

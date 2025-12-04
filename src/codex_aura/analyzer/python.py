@@ -202,9 +202,12 @@ class PythonAnalyzer(BaseAnalyzer):
             class_nodes = extract_classes(tree, relative_file_path)
             function_nodes = extract_functions(tree, relative_file_path)
             import_edges = extract_imports(tree, file_path, repo_root, all_files)
+            call_edges = extract_calls(tree, relative_file_path)
+            extend_edges = extract_extends(tree, relative_file_path)
 
             nodes = [file_node] + class_nodes + function_nodes
-            return nodes, import_edges
+            edges = import_edges + call_edges + extend_edges
+            return nodes, edges
 
         except FileNotFoundError as e:
             logger.warning(f"File not found: {e}")
@@ -467,3 +470,125 @@ def _resolve_relative_import(
         )
     else:
         return str(current_dir.relative_to(repo_root)).replace("/", ".").replace("\\", ".")
+
+
+def extract_calls(tree: ast.AST, relative_file_path: str) -> list[Edge]:
+    """Extract function call relationship edges from an AST.
+
+    Analyzes function calls and creates Edge objects for CALLS relationships
+    between calling functions/methods and called functions.
+
+    Args:
+        tree: The AST to analyze.
+        relative_file_path: Relative path to the file being analyzed.
+
+    Returns:
+        List of Edge objects representing function call relationships.
+    """
+    edges = []
+    function_stack = []
+
+    class CallVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.edges = []
+            self.function_stack = []
+            self.class_stack = []
+
+        def visit_ClassDef(self, node):
+            self.class_stack.append(node.name)
+            self.generic_visit(node)
+            self.class_stack.pop()
+
+        def visit_FunctionDef(self, node):
+            func_name = f"{self.class_stack[-1]}::{node.name}" if self.class_stack else node.name
+            self.function_stack.append(func_name)
+            self.generic_visit(node)
+            self.function_stack.pop()
+
+        def visit_AsyncFunctionDef(self, node):
+            func_name = f"{self.class_stack[-1]}::{node.name}" if self.class_stack else node.name
+            self.function_stack.append(func_name)
+            self.generic_visit(node)
+            self.function_stack.pop()
+
+        def visit_Call(self, node):
+            if self.function_stack:
+                caller = self.function_stack[-1]
+                called_func = _extract_call_target(node)
+                if called_func:
+                    edge = Edge(
+                        source=caller,
+                        target=called_func,
+                        type=EdgeType.CALLS,
+                        line=node.lineno,
+                    )
+                    self.edges.append(edge)
+
+    visitor = CallVisitor()
+    visitor.visit(tree)
+    return visitor.edges
+
+
+def _extract_call_target(call_node: ast.Call) -> str | None:
+    """Extract the target function name from a Call node."""
+    if isinstance(call_node.func, ast.Name):
+        return call_node.func.id
+    elif isinstance(call_node.func, ast.Attribute):
+        # Handle method calls like obj.method() or module.func()
+        parts = []
+        current = call_node.func
+        while isinstance(current, ast.Attribute):
+            parts.insert(0, current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.insert(0, current.id)
+        return ".".join(parts)
+    return None
+
+
+def extract_extends(tree: ast.AST, relative_file_path: str) -> list[Edge]:
+    """Extract class inheritance relationship edges from an AST.
+
+    Analyzes class definitions and creates Edge objects for EXTENDS relationships
+    between child classes and their parent classes.
+
+    Args:
+        tree: The AST to analyze.
+        relative_file_path: Relative path to the file being analyzed.
+
+    Returns:
+        List of Edge objects representing inheritance relationships.
+    """
+    edges = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                parent_class = _extract_base_class_name(base)
+                if parent_class:
+                    edge = Edge(
+                        source=node.name,
+                        target=parent_class,
+                        type=EdgeType.EXTENDS,
+                        line=node.lineno,
+                    )
+                    edges.append(edge)
+
+    return edges
+
+
+def _extract_base_class_name(base_node: ast.expr) -> str | None:
+    """Extract the class name from a base class expression."""
+    if isinstance(base_node, ast.Name):
+        return base_node.id
+    elif isinstance(base_node, ast.Attribute):
+        # Handle qualified names like module.ClassName
+        parts = []
+        current = base_node
+        while isinstance(current, ast.Attribute):
+            parts.insert(0, current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.insert(0, current.id)
+        return ".".join(parts)
+    return None
