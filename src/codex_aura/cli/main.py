@@ -50,12 +50,23 @@ def main():
     stats_parser = subparsers.add_parser("stats", help="Show graph statistics")
     stats_parser.add_argument("graph_file", help="Path to the graph JSON file")
 
+    # Server command
+    server_parser = subparsers.add_parser("server", help="Start API server")
+    server_parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind server to (default: 0.0.0.0)"
+    )
+    server_parser.add_argument(
+        "--port", type=int, default=8000, help="Port to bind server to (default: 8000)"
+    )
+
     args = parser.parse_args()
 
     if args.command == "analyze":
         analyze_repo(args)
     elif args.command == "stats":
         stats_repo(args)
+    elif args.command == "server":
+        start_server(args)
     else:
         parser.print_help()
 
@@ -180,6 +191,31 @@ def stats_repo(args):
 
     except Exception as e:
         print(f"Error: Failed to load or parse graph file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def start_server(args):
+    """Start the API server."""
+    try:
+        import uvicorn
+        from ..api.server import app
+
+        print(f"Starting Codex Aura API server on {args.host}:{args.port}")
+        print(f"Health check: http://{args.host}:{args.port}/health")
+        print(f"API docs: http://{args.host}:{args.port}/docs")
+
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info"
+        )
+
+    except ImportError as e:
+        print(f"Error: Missing required dependencies. Please install FastAPI and uvicorn: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: Failed to start server: {e}", file=sys.stderr)
         sys.exit(1)
 
 

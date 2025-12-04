@@ -61,6 +61,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Codex Aura database
+codex_aura.db
+codex_aura.db-journal
+
 # Flask stuff:
 instance/
 .webassets-cache
