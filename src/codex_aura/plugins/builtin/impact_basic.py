@@ -1,6 +1,6 @@
 """Basic impact analysis plugin."""
 
-from typing import List
+from typing import Dict, List
 
 from ..base import ImpactPlugin, ImpactReport
 from ..registry import PluginRegistry
@@ -10,6 +10,9 @@ from ...models.graph import Graph
 @PluginRegistry.register_impact("basic")
 class BasicImpactPlugin(ImpactPlugin):
     """Basic impact plugin that finds affected files by dependency traversal."""
+
+    name = "basic"
+    version = "1.0.0"
 
     def analyze_impact(self, changed_files: List[str], graph: Graph, depth: int = 3) -> ImpactReport:
         """Analyze impact of changes to specified files.
@@ -59,3 +62,11 @@ class BasicImpactPlugin(ImpactPlugin):
             return "medium"
         else:
             return "high"
+
+    def get_capabilities(self) -> Dict[str, bool]:
+        """Get plugin capabilities."""
+        return {
+            "transitive_analysis": True,
+            "test_detection": True,
+            "risk_scoring": False
+        }

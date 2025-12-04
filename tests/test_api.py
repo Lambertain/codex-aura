@@ -210,3 +210,25 @@ def test_delete_graph_storage(tmp_path):
     # Try to delete non-existent graph
     deleted = storage.delete_graph("nonexistent")
     assert deleted is False
+
+
+def test_capabilities_endpoint():
+    """Test capabilities endpoint."""
+    from src.codex_aura.plugins.registry import PluginRegistry
+
+    # Test the underlying function directly
+    data = PluginRegistry.get_all_capabilities()
+    assert "context_plugin" in data
+    assert "impact_plugin" in data
+    assert "premium_available" in data
+
+    # Check basic plugin capabilities
+    if data["context_plugin"]:
+        assert data["context_plugin"]["name"] == "basic"
+        assert data["context_plugin"]["version"] == "1.0.0"
+        assert "capabilities" in data["context_plugin"]
+
+    if data["impact_plugin"]:
+        assert data["impact_plugin"]["name"] == "basic"
+        assert data["impact_plugin"]["version"] == "1.0.0"
+        assert "capabilities" in data["impact_plugin"]

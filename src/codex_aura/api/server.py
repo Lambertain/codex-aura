@@ -9,6 +9,7 @@ from pydantic import BaseModel, field_validator
 from ..analyzer.python import PythonAnalyzer
 from ..models.graph import Graph, save_graph
 from ..storage.sqlite import SQLiteStorage
+from ..plugins.registry import PluginRegistry
 from collections import deque
 
 app = FastAPI(
@@ -688,6 +689,12 @@ def _calculate_distance(graph: Graph, start_node: str, target_node: str, max_dep
                 queue.append((edge.target, depth + 1))
 
     return None
+
+
+@app.get("/api/v1/capabilities")
+async def get_capabilities():
+    """Get capabilities of all available plugins."""
+    return PluginRegistry.get_all_capabilities()
 
 
 @app.delete("/api/v1/graph/{graph_id}", response_model=DeleteGraphResponse)

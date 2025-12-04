@@ -115,3 +115,66 @@ def test_basic_impact_plugin():
 
     assert "file2.py" in report.affected_files
     assert report.risk_level == "low"  # Only 1 affected file
+
+    # Test capabilities
+    capabilities = plugin.get_capabilities()
+    assert capabilities["transitive_analysis"] is True
+    assert capabilities["test_detection"] is True
+    assert capabilities["risk_scoring"] is False
+
+
+def test_plugin_discovery_entry_points():
+    """Test plugin discovery through entry points."""
+    # Get initial counts
+    initial_context = len(PluginRegistry._context_plugins)
+    initial_impact = len(PluginRegistry._impact_plugins)
+
+    # Discover plugins (should not duplicate existing ones)
+    PluginRegistry.discover_plugins()
+
+    # Check that plugins were discovered (at least the same count or more)
+    context_plugins = PluginRegistry.list_context_plugins()
+    impact_plugins = PluginRegistry.list_impact_plugins()
+
+    assert len(context_plugins) >= initial_context
+    assert len(impact_plugins) >= initial_impact
+    assert "basic" in context_plugins
+    assert "basic" in impact_plugins
+
+
+def test_plugin_capabilities():
+    """Test plugin capabilities retrieval."""
+    # Ensure plugins are loaded
+    from src.codex_aura.plugins import builtin  # noqa: F401
+
+    # Test context plugin capabilities
+    context_caps = PluginRegistry.get_context_plugin_capabilities("basic")
+    assert context_caps is not None
+    assert context_caps["name"] == "basic"
+    assert context_caps["version"] == "1.0.0"
+    assert "capabilities" in context_caps
+    assert context_caps["capabilities"]["semantic_ranking"] is False
+
+    # Test impact plugin capabilities
+    impact_caps = PluginRegistry.get_impact_plugin_capabilities("basic")
+    assert impact_caps is not None
+    assert impact_caps["name"] == "basic"
+    assert impact_caps["version"] == "1.0.0"
+    assert "capabilities" in impact_caps
+    assert impact_caps["capabilities"]["transitive_analysis"] is True
+
+
+def test_get_all_capabilities():
+    """Test getting all plugin capabilities."""
+    # Ensure plugins are loaded
+    from src.codex_aura.plugins import builtin  # noqa: F401
+
+    all_caps = PluginRegistry.get_all_capabilities()
+
+    assert "context_plugin" in all_caps
+    assert "impact_plugin" in all_caps
+    assert "premium_available" in all_caps
+
+    assert all_caps["context_plugin"]["name"] == "basic"
+    assert all_caps["impact_plugin"]["name"] == "basic"
+    assert all_caps["premium_available"] is False

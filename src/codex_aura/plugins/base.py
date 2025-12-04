@@ -40,6 +40,9 @@ class ContextPlugin(ABC):
 class ImpactPlugin(ABC):
     """Base class for impact analysis plugins."""
 
+    name: str
+    version: str
+
     @abstractmethod
     def analyze_impact(self, changed_files: List[str], graph: Graph, depth: int = 3) -> 'ImpactReport':
         """Analyze impact of changes to files.
@@ -51,6 +54,15 @@ class ImpactPlugin(ABC):
 
         Returns:
             Impact analysis report
+        """
+        pass
+
+    @abstractmethod
+    def get_capabilities(self) -> Dict[str, bool]:
+        """Get plugin capabilities.
+
+        Returns:
+            Dict of capability flags
         """
         pass
 

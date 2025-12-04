@@ -20,6 +20,12 @@ mypy = "*"
 [tool.poetry.scripts]
 codex-aura = "codex_aura.cli.main:main"
 
+[project.entry-points."codex_aura.plugins.context"]
+basic = "codex_aura.plugins.builtin.context_basic:BasicContextPlugin"
+
+[project.entry-points."codex_aura.plugins.impact"]
+basic = "codex_aura.plugins.builtin.impact_basic:BasicImpactPlugin"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
