@@ -1,12 +1,14 @@
 import logging
 import subprocess
 from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
 from pathspec import PathSpec
 
 from ..config import load_config_simple
+from ..models.git import ChangeFrequency, GitInfo
 from ..models.node import BlameInfo
 
 logger = logging.getLogger(__name__)
@@ -162,4 +164,132 @@ def get_file_blame(file_path: Path, repo_path: Path) -> BlameInfo | None:
 
     except Exception as e:
         logger.warning(f"Error getting blame info for {file_path}: {e}")
+        return None
+
+
+def get_change_frequency(
+    file_path: Path,
+    repo_path: Path,
+    days: int = 90
+) -> ChangeFrequency | None:
+    """Get change frequency information for a file.
+
+    Analyzes git log to count commits that modified the file
+    within the specified number of days, and determines if it's a hot spot.
+
+    Args:
+        file_path: Path to the file to analyze.
+        repo_path: Path to the repository root.
+        days: Number of days to look back (default: 90).
+
+    Returns:
+        ChangeFrequency object with commit count and hot spot status,
+        or None if not a git repo or error.
+    """
+    try:
+        # Check if we're in a git repository
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Not a git repository: {repo_path}")
+            return None
+
+        # Calculate since date
+        since_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+        # Run git log to count commits
+        result = subprocess.run(
+            ["git", "log", "--since", since_date, "--format=%H", "--", str(file_path)],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            logger.warning(f"Git log failed for {file_path}: {result.stderr}")
+            return None
+
+        # Count commits (filter out empty lines)
+        commits = [c for c in result.stdout.strip().split("\n") if c]
+        commits_count = len(commits)
+
+        # Determine if it's a hot spot (threshold: > 10 commits)
+        is_hot_spot = commits_count > 10
+
+        return ChangeFrequency(
+            commits_count=commits_count,
+            period_days=days,
+            is_hot_spot=is_hot_spot
+        )
+
+    except Exception as e:
+        logger.warning(f"Error getting change frequency for {file_path}: {e}")
+        return None
+
+
+def get_git_info(repo_path: Path) -> GitInfo | None:
+    """Get Git repository information.
+
+    Retrieves current branch name, full commit SHA, and nearest tag.
+
+    Args:
+        repo_path: Path to the repository root.
+
+    Returns:
+        GitInfo object with branch, SHA, and tag information,
+        or None if not a git repo or error.
+    """
+    try:
+        # Check if we're in a git repository
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Not a git repository: {repo_path}")
+            return None
+
+        # Get current branch
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if branch_result.returncode != 0:
+            logger.warning(f"Failed to get branch: {branch_result.stderr}")
+            return None
+        branch = branch_result.stdout.strip()
+
+        # Get full SHA
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        if sha_result.returncode != 0:
+            logger.warning(f"Failed to get SHA: {sha_result.stderr}")
+            return None
+        sha = sha_result.stdout.strip()
+
+        # Get nearest tag (if exists)
+        tag_result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True
+        )
+        tag = tag_result.stdout.strip() if tag_result.returncode == 0 else None
+
+        return GitInfo(branch=branch, sha=sha, tag=tag)
+
+    except Exception as e:
+        logger.warning(f"Error getting git info for {repo_path}: {e}")
         return None
