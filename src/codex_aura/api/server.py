@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from ..analyzer.python import PythonAnalyzer
 from ..models.graph import Graph, save_graph
@@ -77,6 +77,74 @@ class DependenciesResponse(BaseModel):
     depth: int
     nodes: list
     edges: list
+
+
+class ContextRequest(BaseModel):
+    """Request model for context endpoint."""
+
+    graph_id: str
+    entry_points: list[str]
+    depth: int = 2
+    include_code: bool = True
+    max_nodes: int = 50
+
+    @field_validator("depth")
+    @classmethod
+    def validate_depth(cls, v: int) -> int:
+        """Validate depth is between 1 and 5."""
+        if v < 1 or v > 5:
+            raise ValueError("depth must be between 1 and 5")
+        return v
+
+    @field_validator("max_nodes")
+    @classmethod
+    def validate_max_nodes(cls, v: int) -> int:
+        """Validate max_nodes is between 1 and 100."""
+        if v < 1 or v > 100:
+            raise ValueError("max_nodes must be between 1 and 100")
+        return v
+
+
+class ContextNode(BaseModel):
+    """Context node model."""
+
+    id: str
+    type: str
+    path: str
+    code: str | None = None
+    relevance: float
+
+
+class ContextResponse(BaseModel):
+    """Response model for context endpoint."""
+
+    context_nodes: list[ContextNode]
+    total_nodes: int
+    truncated: bool
+
+
+class AffectedFile(BaseModel):
+    """Affected file model for impact analysis."""
+
+    path: str
+    impact_type: str  # "direct" or "transitive"
+    edges: list[str] | None = None  # For direct impact
+    distance: int | None = None  # For transitive impact
+
+
+class ImpactResponse(BaseModel):
+    """Response model for impact analysis endpoint."""
+
+    changed_files: list[str]
+    affected_files: list[AffectedFile]
+    affected_tests: list[str]
+
+
+class DeleteGraphResponse(BaseModel):
+    """Response model for delete graph endpoint."""
+
+    deleted: bool
+    graph_id: str
 
 
 @app.get("/health")
@@ -330,3 +398,241 @@ async def get_dependencies(
         nodes=nodes_data,
         edges=edges_data
     )
+
+
+@app.post("/api/v1/context", response_model=ContextResponse)
+async def get_context(request: ContextRequest):
+    """Get context nodes starting from entry points using BFS traversal."""
+    # Validate depth
+    if request.depth < 1 or request.depth > 5:
+        raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")
+
+    # Validate max_nodes
+    if request.max_nodes < 1 or request.max_nodes > 100:
+        raise HTTPException(status_code=400, detail="max_nodes must be between 1 and 100")
+
+    # Load graph
+    graph = storage.load_graph(request.graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph not found")
+
+    # Validate entry points exist
+    for entry_point in request.entry_points:
+        if not any(n.id == entry_point for n in graph.nodes):
+            raise HTTPException(status_code=404, detail=f"Entry point '{entry_point}' not found")
+
+    # Collect all reachable nodes using BFS from all entry points
+    all_visited = set()
+    node_distances = {}  # node_id -> min_distance
+
+    for entry_point in request.entry_points:
+        visited, _ = traverse_dependencies(graph, entry_point, request.depth, "outgoing")
+        for node_id in visited:
+            if node_id not in all_visited:
+                # Calculate distance from nearest entry point
+                min_distance = float('inf')
+                for ep in request.entry_points:
+                    if ep == node_id:
+                        min_distance = 0
+                        break
+                    # BFS to find distance
+                    dist = _calculate_distance(graph, ep, node_id, request.depth)
+                    if dist is not None:
+                        min_distance = min(min_distance, dist)
+
+                if min_distance != float('inf'):
+                    node_distances[node_id] = min_distance
+                    all_visited.add(node_id)
+
+    # Sort nodes by distance (ascending)
+    sorted_nodes = sorted(all_visited, key=lambda n: node_distances.get(n, float('inf')))
+
+    # Apply max_nodes limit
+    truncated = len(sorted_nodes) > request.max_nodes
+    if truncated:
+        sorted_nodes = sorted_nodes[:request.max_nodes]
+
+    # Build context nodes
+    context_nodes = []
+    for node_id in sorted_nodes:
+        node = next(n for n in graph.nodes if n.id == node_id)
+        node_dict = node.model_dump()
+
+        context_node = ContextNode(
+            id=node.id,
+            type=node.type,
+            path=node.path,
+            code=node_dict.get("code") if request.include_code else None,
+            relevance=1.0 / (1 + node_distances.get(node_id, 0))  # Higher relevance for closer nodes
+        )
+        context_nodes.append(context_node)
+
+    return ContextResponse(
+        context_nodes=context_nodes,
+        total_nodes=len(all_visited),
+        truncated=truncated
+    )
+
+
+@app.get("/api/v1/graph/{graph_id}/impact", response_model=ImpactResponse)
+async def get_impact_analysis(graph_id: str, files: str):
+    """Analyze impact of changes to specified files."""
+    # Parse changed files
+    changed_files = [f.strip() for f in files.split(",") if f.strip()]
+
+    if not changed_files:
+        raise HTTPException(status_code=400, detail="No files specified")
+
+    # Load graph
+    graph = storage.load_graph(graph_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="Graph not found")
+
+    # Validate changed files exist in graph
+    graph_file_paths = {node.path for node in graph.nodes if node.type == "file"}
+    for changed_file in changed_files:
+        if changed_file not in graph_file_paths:
+            raise HTTPException(status_code=404, detail=f"File '{changed_file}' not found in graph")
+
+    # Find all affected files
+    affected_files = []
+    affected_file_paths = set()
+
+    # Direct impact: files that directly import/use the changed files
+    for changed_file in changed_files:
+        # Find all nodes in the changed file
+        changed_file_nodes = [n for n in graph.nodes if n.path == changed_file]
+
+        for node in changed_file_nodes:
+            # Find incoming edges (who imports/calls this node)
+            incoming_edges = [e for e in graph.edges if e.target == node.id]
+
+            for edge in incoming_edges:
+                # Find the file containing the source node
+                source_node = next((n for n in graph.nodes if n.id == edge.source), None)
+                if source_node and source_node.path not in affected_file_paths and source_node.path not in changed_files:
+                    affected_file_paths.add(source_node.path)
+
+                    # Collect edge types for this file
+                    file_edges = set()
+                    for e in incoming_edges:
+                        src_node = next((n for n in graph.nodes if n.id == e.source), None)
+                        if src_node and src_node.path == source_node.path:
+                            file_edges.add(e.type.value)
+
+                    affected_files.append(AffectedFile(
+                        path=source_node.path,
+                        impact_type="direct",
+                        edges=list(file_edges)
+                    ))
+
+    # Transitive impact: files affected by the directly affected files (up to depth 3)
+    max_transitive_depth = 3
+    visited_transitive = set(affected_file_paths)
+
+    for depth in range(1, max_transitive_depth + 1):
+        new_affected = set()
+
+        for affected_path in affected_file_paths - set(changed_files):
+            if affected_path in visited_transitive:
+                # Find nodes in this affected file
+                affected_file_nodes = [n for n in graph.nodes if n.path == affected_path]
+
+                for node in affected_file_nodes:
+                    # Find incoming edges
+                    incoming_edges = [e for e in graph.edges if e.target == node.id]
+
+                    for edge in incoming_edges:
+                        source_node = next((n for n in graph.nodes if n.id == edge.source), None)
+                        if (source_node and
+                            source_node.path not in visited_transitive and
+                            source_node.path not in changed_files):
+
+                            new_affected.add(source_node.path)
+
+        # Add new transitive affected files
+        for new_path in new_affected:
+            affected_files.append(AffectedFile(
+                path=new_path,
+                impact_type="transitive",
+                distance=depth + 1  # +1 because direct is depth 1
+            ))
+
+        affected_file_paths.update(new_affected)
+        visited_transitive.update(new_affected)
+
+        if not new_affected:
+            break
+
+    # Find affected tests
+    affected_tests = []
+    test_prefixes = ["test_", "tests/", "test/"]
+
+    for affected_path in affected_file_paths:
+        # Generate potential test file names
+        test_candidates = []
+
+        # Same directory with test_ prefix
+        import os
+        dir_name = os.path.dirname(affected_path)
+        base_name = os.path.basename(affected_path)
+        name_without_ext = os.path.splitext(base_name)[0]
+
+        test_candidates.append(os.path.join(dir_name, f"test_{base_name}"))
+        test_candidates.append(os.path.join(dir_name, f"test_{name_without_ext}.py"))
+
+        # tests/ directory
+        test_candidates.append(os.path.join("tests", base_name))
+        test_candidates.append(os.path.join("tests", f"test_{base_name}"))
+        test_candidates.append(os.path.join("tests", f"test_{name_without_ext}.py"))
+
+        # Check if any test candidates exist in the graph
+        for candidate in test_candidates:
+            if any(n.path == candidate for n in graph.nodes if n.type == "file"):
+                affected_tests.append(candidate)
+                break
+
+    return ImpactResponse(
+        changed_files=changed_files,
+        affected_files=affected_files,
+        affected_tests=affected_tests
+    )
+
+
+def _calculate_distance(graph: Graph, start_node: str, target_node: str, max_depth: int) -> int | None:
+    """Calculate shortest path distance between two nodes using BFS."""
+    if start_node == target_node:
+        return 0
+
+    visited = set([start_node])
+    queue = deque([(start_node, 0)])  # (node_id, depth)
+
+    while queue:
+        current_node_id, depth = queue.popleft()
+
+        if depth >= max_depth:
+            continue
+
+        # Get outgoing edges
+        outgoing = [e for e in graph.edges if e.source == current_node_id]
+
+        for edge in outgoing:
+            if edge.target == target_node:
+                return depth + 1
+
+            if edge.target not in visited:
+                visited.add(edge.target)
+                queue.append((edge.target, depth + 1))
+
+    return None
+
+
+@app.delete("/api/v1/graph/{graph_id}", response_model=DeleteGraphResponse)
+async def delete_graph(graph_id: str):
+    """Delete a graph from storage."""
+    deleted = storage.delete_graph(graph_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Graph not found")
+
+    return DeleteGraphResponse(deleted=True, graph_id=graph_id)
