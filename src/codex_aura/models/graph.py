@@ -29,11 +29,15 @@ class Stats(BaseModel):
         total_nodes: Total number of nodes in the graph.
         total_edges: Total number of edges in the graph.
         node_types: Count of nodes by type (file, class, function).
+        average_complexity: Average complexity score across all nodes.
+        hot_spots_count: Number of high-complexity or high-connectivity nodes.
     """
 
     total_nodes: int
     total_edges: int
     node_types: Dict[str, int]
+    average_complexity: float = 0.0
+    hot_spots_count: int = 0
 
 
 class Graph(BaseModel):

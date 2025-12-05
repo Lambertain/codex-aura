@@ -96,7 +96,16 @@ class PythonAnalyzer(BaseAnalyzer):
         for node in nodes:
             node_types[node.type] = node_types.get(node.type, 0) + 1
 
-        stats = Stats(total_nodes=len(nodes), total_edges=len(valid_edges), node_types=node_types)
+        # Calculate complexity metrics
+        avg_complexity, hot_spots_count = self._calculate_complexity_metrics(nodes, valid_edges)
+
+        stats = Stats(
+            total_nodes=len(nodes),
+            total_edges=len(valid_edges),
+            node_types=node_types,
+            average_complexity=avg_complexity,
+            hot_spots_count=hot_spots_count
+        )
 
         logger.info(
             f"Analysis complete: {processed_files} files processed, {skipped_files} skipped"
@@ -206,6 +215,50 @@ class PythonAnalyzer(BaseAnalyzer):
                 invalid_edges.append(edge)
 
         return valid_edges, invalid_edges
+
+    def _calculate_complexity_metrics(self, nodes: List[Node], edges: List[Edge]) -> tuple[float, int]:
+        """Calculate average complexity and hot spots count.
+
+        Args:
+            nodes: List of nodes in the graph
+            edges: List of edges in the graph
+
+        Returns:
+            Tuple of (average_complexity, hot_spots_count)
+        """
+        if not nodes:
+            return 0.0, 0
+
+        # Calculate complexity for each node (simplified: based on lines of code)
+        complexities = []
+        for node in nodes:
+            if node.type in ('function', 'class') and node.lines:
+                # Calculate lines of code as a simple complexity metric
+                if len(node.lines) >= 2:
+                    loc = node.lines[1] - node.lines[0] + 1
+                    complexities.append(loc)
+                else:
+                    complexities.append(1)  # Minimum complexity
+            else:
+                complexities.append(1)  # Default for files and other types
+
+        avg_complexity = sum(complexities) / len(complexities) if complexities else 0.0
+
+        # Calculate hot spots: nodes with high connectivity
+        # Build connectivity map
+        connectivity = {}
+        for edge in edges:
+            connectivity[edge.source] = connectivity.get(edge.source, 0) + 1
+            connectivity[edge.target] = connectivity.get(edge.target, 0) + 1
+
+        # Consider nodes with connectivity > average as hot spots
+        if connectivity:
+            avg_connectivity = sum(connectivity.values()) / len(connectivity)
+            hot_spots_count = sum(1 for conn in connectivity.values() if conn > avg_connectivity * 1.5)
+        else:
+            hot_spots_count = 0
+
+        return round(avg_complexity, 2), hot_spots_count
 
     def _create_file_node_only(self, file_path: Path, repo_root: Path) -> Node:
         """Create a file node without parsing content."""

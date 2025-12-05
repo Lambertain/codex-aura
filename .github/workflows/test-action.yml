@@ -1,0 +1,44 @@
+name: Test Codex Aura Action
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  test-basic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          path: '.'
+          comment-on-pr: 'false'
+
+  test-with-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          path: '.'
+          upload-artifact: true
+          artifact-name: 'codex-aura-graph'
+          artifact-retention-days: 30
+          comment-on-pr: 'false'
+
+  test-scheduled:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          path: '.'
+          track-metrics: true
+          upload-artifact: true
+          comment-on-pr: 'false'

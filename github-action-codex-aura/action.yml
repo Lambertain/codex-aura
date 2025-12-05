@@ -22,9 +22,25 @@ inputs:
     required: false
     default: 'false'
   fail-on-risk:
-    description: 'Risk level to fail on (low/medium/high/critical)'
+    description: 'Risk level to fail on (low/medium/high/critical/none)'
     required: false
-    default: 'critical'
+    default: 'none'
+  upload-artifact:
+    description: 'Upload graph as artifact'
+    required: false
+    default: 'false'
+  artifact-name:
+    description: 'Name for the uploaded artifact'
+    required: false
+    default: 'codex-aura-graph'
+  artifact-retention-days:
+    description: 'Retention days for artifact'
+    required: false
+    default: '30'
+  track-metrics:
+    description: 'Track metrics for trend analysis'
+    required: false
+    default: 'false'
 
 outputs:
   graph-file:
@@ -33,13 +49,356 @@ outputs:
     description: 'Number of nodes in graph'
   edge-count:
     description: 'Number of edges in graph'
+  average-complexity:
+    description: 'Average complexity score'
+  hot-spots-count:
+    description: 'Number of hot spots detected'
 
 runs:
-  using: 'docker'
-  image: 'Dockerfile'
-  args:
-    - ${{ inputs.path }}
-    - ${{ inputs.edge-types }}
-    - ${{ inputs.output }}
-    - ${{ inputs.comment-on-pr }}
-    - ${{ inputs.fail-on-risk }}
+  using: 'composite'
+  steps:
+    - name: Install Codex Aura
+      run: pip install codex-aura
+      shell: bash
+
+    - name: Analyze codebase
+      id: analyze
+      run: |
+        codex-aura analyze "${{ inputs.path }}" \
+          --edges "${{ inputs.edge-types }}" \
+          --format json \
+          --output "${{ inputs.output }}"
+      shell: bash
+
+    - name: Set outputs
+      id: outputs
+      run: |
+        NODE_COUNT=$(jq '.stats.total_nodes' "${{ inputs.output }}")
+        EDGE_COUNT=$(jq '.stats.total_edges' "${{ inputs.output }}")
+        AVG_COMPLEXITY=$(jq '.stats.average_complexity // 0' "${{ inputs.output }}")
+        HOT_SPOTS=$(jq '.stats.hot_spots_count // 0' "${{ inputs.output }}")
+
+        echo "graph-file=${{ inputs.output }}" >> $GITHUB_OUTPUT
+        echo "node-count=$NODE_COUNT" >> $GITHUB_OUTPUT
+        echo "edge-count=$EDGE_COUNT" >> $GITHUB_OUTPUT
+        echo "average-complexity=$AVG_COMPLEXITY" >> $GITHUB_OUTPUT
+        echo "hot-spots-count=$HOT_SPOTS" >> $GITHUB_OUTPUT
+
+        echo "✅ Analysis complete: $NODE_COUNT nodes, $EDGE_COUNT edges"
+      shell: bash
+
+    - name: Calculate impact analysis
+      id: impact
+      if: inputs.comment-on-pr == 'true' || inputs.fail-on-risk != 'none' || inputs.track-metrics == 'true'
+      run: |
+        # Get PR number from event if available
+        if [ -f "$GITHUB_EVENT_PATH" ]; then
+          PR_NUMBER=$(jq -r '.number // empty' "$GITHUB_EVENT_PATH")
+        fi
+
+        if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+          # Get changed files from PR
+          CHANGED_FILES=$(curl -s \
+            -H "Authorization: token ${{ github.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER/files" | \
+            jq -r '.[].filename' | tr '\n' ' ')
+
+          echo "Changed files: $CHANGED_FILES"
+        else
+          CHANGED_FILES=""
+        fi
+
+        # Calculate impact analysis using Python script
+        IMPACT_DATA=$(python3 -c "
+        import json
+        import sys
+        from pathlib import Path
+
+        # Load graph
+        with open('${{ inputs.output }}', 'r') as f:
+            graph = json.load(f)
+
+        # Get changed files
+        changed_files = set('$CHANGED_FILES'.split()) if '$CHANGED_FILES' else set()
+
+        # Find affected files
+        def get_affected_files(changed_files, graph):
+            directly_affected = set()
+            transitively_affected = set()
+            affected_tests = set()
+
+            # Build dependency map (reverse edges)
+            dep_map = {}
+            for edge in graph['edges']:
+                target = edge['target']
+                source = edge['source']
+                if target not in dep_map:
+                    dep_map[target] = set()
+                dep_map[target].add(source)
+
+            # Find directly affected (files that import changed files)
+            for changed in changed_files:
+                if changed in dep_map:
+                    directly_affected.update(dep_map[changed])
+
+            # Find transitively affected (recursive)
+            visited = set()
+            to_visit = directly_affected.copy()
+
+            while to_visit:
+                current = to_visit.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+
+                if current in dep_map:
+                    transitively_affected.update(dep_map[current])
+                    to_visit.update(dep_map[current])
+
+            # Find affected tests
+            for node in graph['nodes']:
+                if node['type'] == 'file' and ('test' in node['name'].lower() or 'spec' in node['name'].lower()):
+                    if node['path'] in directly_affected or node['path'] in transitively_affected:
+                        affected_tests.add(node['path'])
+
+            return {
+                'directly_affected': len(directly_affected),
+                'transitively_affected': len(transitively_affected),
+                'affected_tests': len(affected_tests),
+                'total_affected': len(directly_affected) + len(transitively_affected),
+                'changed_files': list(changed_files),
+                'directly_affected_files': list(directly_affected)[:5],  # Limit for display
+                'transitively_affected_files': list(transitively_affected)[:5]  # Limit for display
+            }
+
+        impact = get_affected_files(changed_files, graph)
+        print(json.dumps(impact))
+        ")
+
+        # Save impact data for later use
+        echo "$IMPACT_DATA" > impact_data.json
+
+        # Parse impact data
+        DIRECTLY_AFFECTED=$(echo $IMPACT_DATA | jq -r '.directly_affected')
+        TRANSITIVELY_AFFECTED=$(echo $IMPACT_DATA | jq -r '.transitively_affected')
+        AFFECTED_TESTS=$(echo $IMPACT_DATA | jq -r '.affected_tests')
+        TOTAL_AFFECTED=$(echo $IMPACT_DATA | jq -r '.total_affected')
+
+        # Calculate risk level
+        TOTAL_FILES=$(jq '.stats.total_nodes' "${{ inputs.output }}")
+        AFFECTED_PERCENT=$(( TOTAL_AFFECTED * 100 / TOTAL_FILES ))
+
+        if [ $AFFECTED_PERCENT -gt 50 ]; then
+            RISK_LEVEL="critical"
+            RISK_EMOJI="🚨"
+        elif [ $AFFECTED_PERCENT -gt 20 ]; then
+            RISK_LEVEL="high"
+            RISK_EMOJI="⚠️"
+        elif [ $AFFECTED_PERCENT -gt 10 ]; then
+            RISK_LEVEL="medium"
+            RISK_EMOJI="⚠️"
+        elif [ $AFFECTED_PERCENT -gt 5 ]; then
+            RISK_LEVEL="low"
+            RISK_EMOJI="ℹ️"
+        else
+            RISK_LEVEL="minimal"
+            RISK_EMOJI="✅"
+        fi
+
+        echo "Risk assessment: $RISK_LEVEL ($AFFECTED_PERCENT% affected)"
+
+        # Save risk data
+        echo "{\"risk_level\":\"$RISK_LEVEL\",\"risk_emoji\":\"$RISK_EMOJI\",\"affected_percent\":$AFFECTED_PERCENT,\"directly_affected\":$DIRECTLY_AFFECTED,\"transitively_affected\":$TRANSITIVELY_AFFECTED,\"affected_tests\":$AFFECTED_TESTS}" > risk_data.json
+      shell: bash
+
+    - name: Track metrics
+      if: inputs.track-metrics == 'true'
+      run: |
+        # Load current metrics
+        NODE_COUNT=$(jq '.stats.total_nodes' "${{ inputs.output }}")
+        EDGE_COUNT=$(jq '.stats.total_edges' "${{ inputs.output }}")
+        AVG_COMPLEXITY=$(jq '.stats.average_complexity // 0' "${{ inputs.output }}")
+        HOT_SPOTS=$(jq '.stats.hot_spots_count // 0' "${{ inputs.output }}")
+
+        # Create metrics data
+        METRICS_DATA="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"nodes\":$NODE_COUNT,\"edges\":$EDGE_COUNT,\"complexity\":$AVG_COMPLEXITY,\"hotspots\":$HOT_SPOTS,\"run_id\":\"${{ github.run_id }}\",\"repository\":\"${{ github.repository }}\"}"
+
+        # Save to metrics file
+        echo "$METRICS_DATA" > codex-aura-metrics.json
+
+        # Try to load previous metrics for comparison
+        if [ -f "codex-aura-metrics-history.json" ]; then
+          PREV_METRICS=$(cat codex-aura-metrics-history.json | jq '.[-1] // empty')
+        else
+          PREV_METRICS="null"
+        fi
+
+        if [ "$PREV_METRICS" != "null" ]; then
+          PREV_NODES=$(echo $PREV_METRICS | jq -r '.nodes')
+          PREV_EDGES=$(echo $PREV_METRICS | jq -r '.edges')
+          PREV_COMPLEXITY=$(echo $PREV_METRICS | jq -r '.complexity')
+          PREV_HOTSPOTS=$(echo $PREV_METRICS | jq -r '.hotspots')
+
+          NODES_DIFF=$((NODE_COUNT - PREV_NODES))
+          EDGES_DIFF=$((EDGE_COUNT - PREV_EDGES))
+          COMPLEXITY_DIFF=$(echo "scale=2; $AVG_COMPLEXITY - $PREV_COMPLEXITY" | bc 2>/dev/null || echo "0")
+          HOTSPOTS_DIFF=$((HOT_SPOTS - PREV_HOTSPOTS))
+
+          echo "📊 Trend Analysis:" > trend_summary.txt
+          echo "Nodes: $NODE_COUNT (${NODES_DIFF})" >> trend_summary.txt
+          echo "Edges: $EDGE_COUNT (${EDGES_DIFF})" >> trend_summary.txt
+          echo "Complexity: $AVG_COMPLEXITY (${COMPLEXITY_DIFF})" >> trend_summary.txt
+          echo "Hot spots: $HOT_SPOTS (${HOTSPOTS_DIFF})" >> trend_summary.txt
+        else
+          echo "📊 First metrics collection - no trend data available" > trend_summary.txt
+        fi
+
+        # Update metrics history
+        if [ -f "codex-aura-metrics-history.json" ]; then
+          jq ". + [$METRICS_DATA]" codex-aura-metrics-history.json > temp_metrics.json && mv temp_metrics.json codex-aura-metrics-history.json
+        else
+          echo "[$METRICS_DATA]" > codex-aura-metrics-history.json
+        fi
+      shell: bash
+
+    - name: Comment on PR
+      if: inputs.comment-on-pr == 'true'
+      run: |
+        # Load impact and risk data
+        if [ -f "impact_data.json" ]; then
+          IMPACT_DATA=$(cat impact_data.json)
+        fi
+
+        if [ -f "risk_data.json" ]; then
+          RISK_DATA=$(cat risk_data.json)
+          RISK_LEVEL=$(echo $RISK_DATA | jq -r '.risk_level')
+          RISK_EMOJI=$(echo $RISK_DATA | jq -r '.risk_emoji')
+          DIRECTLY_AFFECTED=$(echo $RISK_DATA | jq -r '.directly_affected')
+          TRANSITIVELY_AFFECTED=$(echo $RISK_DATA | jq -r '.transitively_affected')
+          AFFECTED_TESTS=$(echo $RISK_DATA | jq -r '.affected_tests')
+        fi
+
+        # Get affected files lists
+        if [ -n "$IMPACT_DATA" ]; then
+          DIRECTLY_AFFECTED_FILES=$(echo $IMPACT_DATA | jq -r '.directly_affected_files[]' | head -5 | sed 's/^/- /' | tr '\n' '\n')
+          TRANSITIVELY_AFFECTED_FILES=$(echo $IMPACT_DATA | jq -r '.transitively_affected_files[]' | head -5 | sed 's/^/- /' | tr '\n' '\n')
+          CHANGED_FILES_LIST=$(echo $IMPACT_DATA | jq -r '.changed_files[]' | sed 's/^/- /' | tr '\n' '\n')
+        fi
+
+        # Load trend data if available
+        TREND_INFO=""
+        if [ -f "trend_summary.txt" ]; then
+          TREND_INFO=$(cat trend_summary.txt)
+        fi
+
+        # Create comment body
+        COMMENT_BODY="## 📊 Codex Aura Analysis
+
+### Changed Files
+$CHANGED_FILES_LIST
+
+### Impact Assessment
+
+| Metric | Value |
+|--------|-------|
+| Directly affected files | $DIRECTLY_AFFECTED |
+| Transitively affected | $TRANSITIVELY_AFFECTED |
+| Affected tests | $AFFECTED_TESTS |
+| Risk level | $RISK_EMOJI $RISK_LEVEL |
+
+### Affected Files
+<details>
+<summary>Show directly affected files ($DIRECTLY_AFFECTED)</summary>
+
+$DIRECTLY_AFFECTED_FILES
+</details>
+
+<details>
+<summary>Show transitively affected files ($TRANSITIVELY_AFFECTED)</summary>
+
+$TRANSITIVELY_AFFECTED_FILES
+</details>
+
+### Trend Analysis
+$TREND_INFO
+
+### Downloads
+[Download full graph](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts)"
+
+        # Get PR number
+        PR_NUMBER=$(jq -r '.number' "$GITHUB_EVENT_PATH")
+
+        # Post comment using GitHub API
+        curl -X POST \
+          -H "Authorization: token ${{ github.token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+          -d "{\"body\":\"$COMMENT_BODY\"}"
+      shell: bash
+
+    - name: Upload artifact
+      if: inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.output }}
+        retention-days: ${{ inputs.artifact-retention-days }}
+
+    - name: Upload metrics artifact
+      if: inputs.track-metrics == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}-metrics
+        path: |
+          codex-aura-metrics.json
+          codex-aura-metrics-history.json
+        retention-days: ${{ inputs.artifact-retention-days }}
+
+    - name: Risk-based blocking
+      if: inputs.fail-on-risk != 'none'
+      run: |
+        # Load risk data
+        if [ -f "risk_data.json" ]; then
+          RISK_DATA=$(cat risk_data.json)
+          RISK_LEVEL=$(echo $RISK_DATA | jq -r '.risk_level')
+          AFFECTED_PERCENT=$(echo $RISK_DATA | jq -r '.affected_percent')
+          TOTAL_AFFECTED=$(echo $RISK_DATA | jq -r '.directly_affected + .transitively_affected')
+          TOTAL_FILES=$(jq '.stats.total_nodes' "${{ inputs.output }}")
+        fi
+
+        # Determine if we should fail based on risk level
+        SHOULD_FAIL=false
+
+        case ${{ inputs.fail-on-risk }} in
+          "low")
+            if [ "$RISK_LEVEL" = "low" ] || [ "$RISK_LEVEL" = "medium" ] || [ "$RISK_LEVEL" = "high" ] || [ "$RISK_LEVEL" = "critical" ]; then
+              SHOULD_FAIL=true
+            fi
+            ;;
+          "medium")
+            if [ "$RISK_LEVEL" = "medium" ] || [ "$RISK_LEVEL" = "high" ] || [ "$RISK_LEVEL" = "critical" ]; then
+              SHOULD_FAIL=true
+            fi
+            ;;
+          "high")
+            if [ "$RISK_LEVEL" = "high" ] || [ "$RISK_LEVEL" = "critical" ]; then
+              SHOULD_FAIL=true
+            fi
+            ;;
+          "critical")
+            if [ "$RISK_LEVEL" = "critical" ]; then
+              SHOULD_FAIL=true
+            fi
+            ;;
+        esac
+
+        if [ "$SHOULD_FAIL" = "true" ]; then
+          echo "❌ PR blocked due to $RISK_LEVEL risk level (threshold: ${{ inputs.fail-on-risk }})"
+          echo "Affected files: $TOTAL_AFFECTED/$TOTAL_FILES ($AFFECTED_PERCENT%)"
+          echo "::error::PR blocked: Risk level $RISK_LEVEL exceeds threshold ${{ inputs.fail-on-risk }}"
+          exit 1
+        else
+          echo "✅ PR approved: Risk level $RISK_LEVEL is below threshold ${{ inputs.fail-on-risk }}"
+        fi
+      shell: bash

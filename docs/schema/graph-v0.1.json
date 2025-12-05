@@ -130,6 +130,16 @@
           },
           "title": "Node Types",
           "type": "object"
+        },
+        "average_complexity": {
+          "title": "Average Complexity",
+          "type": "number",
+          "default": 0.0
+        },
+        "hot_spots_count": {
+          "title": "Hot Spots Count",
+          "type": "integer",
+          "default": 0
         }
       },
       "required": [

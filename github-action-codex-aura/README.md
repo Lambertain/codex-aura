@@ -8,14 +8,23 @@ This GitHub Action analyzes your codebase and generates a dependency graph using
 - `edge-types`: Edge types to extract (default: 'imports,calls,extends')
 - `output`: Output file path (default: 'codex-aura-graph.json')
 - `comment-on-pr`: Add comment to PR with results (default: 'false')
+- `fail-on-risk`: Risk level to fail on (low/medium/high/critical/none) (default: 'none')
+- `upload-artifact`: Upload graph as artifact (default: 'false')
+- `artifact-name`: Name for the uploaded artifact (default: 'codex-aura-graph')
+- `artifact-retention-days`: Retention days for artifact (default: '30')
+- `track-metrics`: Track metrics for trend analysis (default: 'false')
 
 ## Outputs
 
 - `graph-file`: Path to generated graph file
 - `node-count`: Number of nodes in graph
 - `edge-count`: Number of edges in graph
+- `average-complexity`: Average complexity score
+- `hot-spots-count`: Number of hot spots detected
 
 ## Usage
+
+### Basic Usage
 
 ```yaml
 name: Analyze Codebase
@@ -32,6 +41,48 @@ jobs:
           comment-on-pr: 'true'
 ```
 
+### Graph Artifact Upload (E7-3)
+
+```yaml
+name: Analyze and Upload Graph
+on: [push, pull_request]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codex-aura/analyze-action@v1
+        with:
+          path: '.'
+          upload-artifact: true
+          artifact-name: 'codex-aura-graph'
+          artifact-retention-days: 30
+          comment-on-pr: 'true'
+```
+
+### Scheduled Analysis with Metrics Tracking (E7-4)
+
+```yaml
+name: Weekly Code Analysis
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codex-aura/analyze-action@v1
+        with:
+          path: '.'
+          track-metrics: true
+          upload-artifact: true
+          comment-on-pr: 'true'
+```
+
 ### Advanced Usage
 
 ```yaml
@@ -41,3 +92,8 @@ jobs:
     edge-types: 'imports,calls'
     output: 'graph.json'
     comment-on-pr: 'true'
+    fail-on-risk: 'high'
+    upload-artifact: true
+    artifact-name: 'my-project-graph'
+    artifact-retention-days: 90
+    track-metrics: true
