@@ -21,6 +21,10 @@ inputs:
     description: 'Add comment to PR with results'
     required: false
     default: 'false'
+  fail-on-risk:
+    description: 'Risk level to fail on (low/medium/high/critical)'
+    required: false
+    default: 'critical'
 
 outputs:
   graph-file:
@@ -38,3 +42,4 @@ runs:
     - ${{ inputs.edge-types }}
     - ${{ inputs.output }}
     - ${{ inputs.comment-on-pr }}
+    - ${{ inputs.fail-on-risk }}
