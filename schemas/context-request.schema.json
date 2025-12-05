@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codex-aura.org/schemas/context-request.schema.json",
+  "title": "ContextRequest",
+  "description": "Request model for context endpoint",
+  "type": "object",
+  "required": ["graph_id", "entry_points"],
+  "properties": {
+    "graph_id": {
+      "type": "string",
+      "description": "ID of the graph to query"
+    },
+    "entry_points": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of node IDs to use as entry points for context retrieval"
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "default": 2,
+      "description": "Traversal depth from entry points"
+    },
+    "include_code": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether to include source code in the response"
+    },
+    "max_nodes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 50,
+      "description": "Maximum number of nodes to return"
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codex-aura.org/schemas/node.schema.json",
+  "title": "Node",
+  "description": "Represents a node in the code dependency graph",
+  "type": "object",
+  "required": ["id", "type", "name", "path"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the node"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["file", "class", "function"],
+      "description": "Type of the node"
+    },
+    "name": {
+      "type": "string",
+      "description": "Name of the entity (filename, class name, or function name)"
+    },
+    "path": {
+      "type": "string",
+      "description": "Relative path to the file containing this node"
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "Start and end line numbers where the entity is defined"
+    },
+    "docstring": {
+      "type": "string",
+      "description": "Documentation string extracted from the code"
+    },
+    "blame": {
+      "$ref": "#/definitions/BlameInfo",
+      "description": "Git blame information for authorship tracking"
+    }
+  },
+  "definitions": {
+    "BlameInfo": {
+      "type": "object",
+      "required": ["primary_author", "contributors", "author_distribution"],
+      "properties": {
+        "primary_author": {
+          "type": "string",
+          "description": "Primary author of the file"
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of all contributors to the file"
+        },
+        "author_distribution": {
+          "type": "object",
+          "patternProperties": {
+            ".*": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Distribution of authorship across the file (author -> line count)"
+        }
+      }
+    }
+  }
+}

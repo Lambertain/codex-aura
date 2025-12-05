@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codex-aura.org/schemas/edge.schema.json",
+  "title": "Edge",
+  "description": "Represents a directed relationship between two nodes in the code graph",
+  "type": "object",
+  "required": ["source", "target", "type"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "description": "ID of the source node"
+    },
+    "target": {
+      "type": "string",
+      "description": "ID of the target node"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["IMPORTS", "CALLS", "EXTENDS"],
+      "description": "Type of relationship between nodes"
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Line number where the relationship is defined"
+    }
+  }
+}

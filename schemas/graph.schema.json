@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codex-aura.org/schemas/graph.schema.json",
+  "title": "Graph",
+  "description": "Complete representation of a code dependency graph",
+  "type": "object",
+  "required": ["version", "generated_at", "repository", "stats", "nodes", "edges"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Version of the graph format"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the graph was generated (ISO 8601)"
+    },
+    "repository": {
+      "$ref": "#/definitions/Repository",
+      "description": "Information about the analyzed repository"
+    },
+    "stats": {
+      "$ref": "#/definitions/Stats",
+      "description": "Statistics about the graph contents"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "node.schema.json"
+      },
+      "description": "List of all nodes in the graph"
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "edge.schema.json"
+      },
+      "description": "List of all edges in the graph"
+    },
+    "sha": {
+      "type": "string",
+      "description": "Current commit SHA of the analyzed repository"
+    }
+  },
+  "definitions": {
+    "Repository": {
+      "type": "object",
+      "required": ["path", "name"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute path to the repository root"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the repository (basename of the path)"
+        }
+      }
+    },
+    "Stats": {
+      "type": "object",
+      "required": ["total_nodes", "total_edges", "node_types"],
+      "properties": {
+        "total_nodes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of nodes in the graph"
+        },
+        "total_edges": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of edges in the graph"
+        },
+        "node_types": {
+          "type": "object",
+          "patternProperties": {
+            ".*": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "Count of nodes by type (file, class, function)"
+        },
+        "average_complexity": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Average complexity score across all nodes"
+        },
+        "hot_spots_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of high-complexity or high-connectivity nodes"
+        }
+      }
+    }
+  }
+}
