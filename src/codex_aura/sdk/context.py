@@ -180,7 +180,11 @@ class Context:
             lines.append(f"    <node id=\"{node.id}\" type=\"{node.type}\" path=\"{node.path}\" relevance=\"{node.relevance:.2f}\">")
             if node.code:
                 # Escape XML characters in code
-                code = node.code.replace("&", "&").replace("<", "<").replace(">", ">").replace('"', """).replace("'", "'")
+                code = node.code.replace("&", "&")
+                code = code.replace("<", "<")
+                code = code.replace(">", ">")
+                code = code.replace('"', """)
+                code = code.replace("'", "'")
                 lines.append(f"      <code>{code}</code>")
             lines.append("    </node>")
         lines.append("  </context_nodes>")
