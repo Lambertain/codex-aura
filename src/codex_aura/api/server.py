@@ -1,5 +1,6 @@
 """FastAPI server for codex-aura."""
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +19,24 @@ from ..models.graph import Graph, save_graph
 from ..storage.sqlite import SQLiteStorage
 from ..plugins.registry import PluginRegistry
 from ..models.edge import EdgeType
+from ..logging import configure_logging, get_logger
+from ..middleware import RequestIDMiddleware, RequestLoggingMiddleware
+from ..metrics import get_metrics_response, MetricsMiddleware, GRAPHS_TOTAL, GRAPH_SIZE, ANALYSIS_DURATION, ANALYSIS_FILES, CONTEXT_REQUESTS_TOTAL, CONTEXT_NODES_RETURNED
+from ..health import health_checker
+from ..tracing import configure_tracing, instrument_app, get_tracer
+from ..analytics import analytics
 from collections import deque
+
+# Configure structured logging
+log_level = os.getenv("LOG_LEVEL", "INFO")
+configure_logging(log_level)
+logger = get_logger(__name__)
+
+# Configure tracing
+jaeger_host = os.getenv("JAEGER_HOST", "localhost")
+jaeger_port = int(os.getenv("JAEGER_PORT", "14268"))
+configure_tracing(service_name="codex-aura", jaeger_host=jaeger_host, jaeger_port=jaeger_port)
+tracer = get_tracer(__name__)
 
 app = FastAPI(
     title="Codex Aura API",
@@ -45,6 +63,12 @@ app.state.limiter = limiter
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(MetricsMiddleware)
+
+# Instrument app for tracing
+instrument_app(app)
 
 # Mount static files
 import os
@@ -301,14 +325,26 @@ class DeleteGraphResponse(BaseModel):
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "ok"}
+    """Quick liveness health check endpoint."""
+    return health_checker.quick_health()
 
 
 @app.get("/ready")
 async def ready():
-    """Readiness check endpoint."""
-    return {"status": "ready"}
+    """Readiness check endpoint with basic component checks."""
+    return health_checker.readiness_health()
+
+
+@app.get("/health/deep")
+async def deep_health():
+    """Deep health check endpoint with comprehensive system analysis."""
+    return health_checker.deep_health()
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    return get_metrics_response()
 
 
 
@@ -1004,40 +1040,95 @@ async def analyze(request: AnalyzeRequest):
 
     start_time = time.time()
 
-    # Repo path is already validated by Pydantic model
-    repo_path = Path(request.repo_path)
+    with tracer.start_as_current_span("analyze_repository") as span:
+        span.set_attribute("repo_path", str(request.repo_path))
+        span.set_attribute("edge_types", str(request.edge_types))
 
-    try:
-        # Analyze repository
-        analyzer = PythonAnalyzer()
-        graph = analyzer.analyze(repo_path)
+        # Repo path is already validated by Pydantic model
+        repo_path = Path(request.repo_path)
 
-        # Generate graph ID
-        graph_id = f"g_{uuid.uuid4().hex[:12]}"
+        try:
+            # Analyze repository
+            analyzer = PythonAnalyzer()
+            graph = analyzer.analyze(repo_path)
 
-        # Save graph to storage
-        storage.save_graph(graph, graph_id)
+            # Generate graph ID
+            graph_id = f"g_{uuid.uuid4().hex[:12]}"
 
-        duration_ms = int((time.time() - start_time) * 1000)
+            # Save graph to storage
+            storage.save_graph(graph, graph_id)
 
-        return AnalyzeResponse(
-            graph_id=graph_id,
-            status="completed",
-            stats={
-                "files": graph.stats.node_types.get("file", 0),
-                "classes": graph.stats.node_types.get("class", 0),
-                "functions": graph.stats.node_types.get("function", 0),
-                "edges": {
-                    "IMPORTS": sum(1 for edge in graph.edges if edge.type == "IMPORTS"),
-                    "CALLS": sum(1 for edge in graph.edges if edge.type == "CALLS"),
-                    "EXTENDS": sum(1 for edge in graph.edges if edge.type == "EXTENDS"),
-                }
-            },
-            duration_ms=duration_ms
-        )
+            duration_ms = int((time.time() - start_time) * 1000)
+            duration_seconds = duration_ms / 1000.0
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+            # Update span
+            span.set_attribute("graph_id", graph_id)
+            span.set_attribute("files_analyzed", graph.stats.node_types.get("file", 0))
+            span.set_attribute("duration_ms", duration_ms)
+
+            # Update metrics
+            GRAPHS_TOTAL.inc()
+            GRAPH_SIZE.labels(graph_id=graph_id).set(len(graph.nodes))
+            ANALYSIS_DURATION.labels(repo_name=repo_path.name).observe(duration_seconds)
+            ANALYSIS_FILES.labels(repo_name=repo_path.name).inc(graph.stats.node_types.get("file", 0))
+
+            # Track analytics
+            analytics.track_analysis(
+                repo_path=str(repo_path),
+                graph_id=graph_id,
+                stats={
+                    "files": graph.stats.node_types.get("file", 0),
+                    "classes": graph.stats.node_types.get("class", 0),
+                    "functions": graph.stats.node_types.get("function", 0),
+                    "edges": {
+                        "IMPORTS": sum(1 for edge in graph.edges if edge.type == "IMPORTS"),
+                        "CALLS": sum(1 for edge in graph.edges if edge.type == "CALLS"),
+                        "EXTENDS": sum(1 for edge in graph.edges if edge.type == "EXTENDS"),
+                    }
+                },
+                duration_ms=duration_ms
+            )
+
+            # Log successful analysis
+            logger.info(
+                "analysis_completed",
+                graph_id=graph_id,
+                repo_path=str(repo_path),
+                files_analyzed=graph.stats.node_types.get("file", 0),
+                classes_found=graph.stats.node_types.get("class", 0),
+                functions_found=graph.stats.node_types.get("function", 0),
+                edges_created=len(graph.edges),
+                duration_ms=duration_ms
+            )
+
+            return AnalyzeResponse(
+                graph_id=graph_id,
+                status="completed",
+                stats={
+                    "files": graph.stats.node_types.get("file", 0),
+                    "classes": graph.stats.node_types.get("class", 0),
+                    "functions": graph.stats.node_types.get("function", 0),
+                    "edges": {
+                        "IMPORTS": sum(1 for edge in graph.edges if edge.type == "IMPORTS"),
+                        "CALLS": sum(1 for edge in graph.edges if edge.type == "CALLS"),
+                        "EXTENDS": sum(1 for edge in graph.edges if edge.type == "EXTENDS"),
+                    }
+                },
+                duration_ms=duration_ms
+            )
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+
+            logger.error(
+                "analysis_failed",
+                repo_path=str(repo_path),
+                error=str(e),
+                error_type=type(e).__name__,
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
 @app.get("/api/v1/graphs", response_model=GraphsResponse)
@@ -1272,18 +1363,25 @@ async def get_context(request: ContextRequest):
     Useful for understanding the code context around specific functions
     or classes, with relevance scoring based on distance from entry points.
     """
-    # Validate depth
-    if request.depth < 1 or request.depth > 5:
-        raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")
+    with tracer.start_as_current_span("get_context") as span:
+        span.set_attribute("graph_id", request.graph_id)
+        span.set_attribute("entry_points", str(request.entry_points))
+        span.set_attribute("depth", request.depth)
+        span.set_attribute("max_nodes", request.max_nodes)
+        span.set_attribute("include_code", request.include_code)
 
-    # Validate max_nodes
-    if request.max_nodes < 1 or request.max_nodes > 100:
-        raise HTTPException(status_code=400, detail="max_nodes must be between 1 and 100")
+        # Validate depth
+        if request.depth < 1 or request.depth > 5:
+            raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")
 
-    # Load graph
-    graph = storage.load_graph(request.graph_id)
-    if not graph:
-        raise HTTPException(status_code=404, detail="Graph not found")
+        # Validate max_nodes
+        if request.max_nodes < 1 or request.max_nodes > 100:
+            raise HTTPException(status_code=400, detail="max_nodes must be between 1 and 100")
+
+        # Load graph
+        graph = storage.load_graph(request.graph_id)
+        if not graph:
+            raise HTTPException(status_code=404, detail="Graph not found")
 
     # Validate entry points exist
     for entry_point in request.entry_points:
@@ -1336,11 +1434,41 @@ async def get_context(request: ContextRequest):
         )
         context_nodes.append(context_node)
 
-    return ContextResponse(
-        context_nodes=context_nodes,
-        total_nodes=len(all_visited),
-        truncated=truncated
-    )
+        # Update metrics
+        CONTEXT_REQUESTS_TOTAL.inc()
+        CONTEXT_NODES_RETURNED.labels(truncated=str(truncated).lower()).observe(len(context_nodes))
+
+        # Update span
+        span.set_attribute("context_nodes_returned", len(context_nodes))
+        span.set_attribute("total_nodes", len(all_visited))
+        span.set_attribute("truncated", truncated)
+
+        # Track analytics
+        analytics.track_context_request(
+            graph_id=request.graph_id,
+            entry_points_count=len(request.entry_points),
+            depth=request.depth,
+            max_nodes=request.max_nodes,
+            nodes_returned=len(context_nodes),
+            truncated=truncated
+        )
+
+        logger.info(
+            "context_retrieved",
+            graph_id=request.graph_id,
+            entry_points=request.entry_points,
+            depth=request.depth,
+            max_nodes=request.max_nodes,
+            context_nodes_returned=len(context_nodes),
+            total_nodes=len(all_visited),
+            truncated=truncated
+        )
+
+        return ContextResponse(
+            context_nodes=context_nodes,
+            total_nodes=len(all_visited),
+            truncated=truncated
+        )
 
 
 @app.get("/api/v1/graph/{graph_id}/impact", response_model=ImpactResponse)
