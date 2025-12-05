@@ -40,20 +40,41 @@ const extension_1 = require("../extension");
 function registerCommands(context) {
     const config = vscode.workspace.getConfiguration('codexAura');
     const serverUrl = config.get('serverUrl', 'http://localhost:8000');
+    const defaultContextDepth = config.get('defaultContextDepth', 2);
+    const defaultMaxTokens = config.get('defaultMaxTokens', 8000);
+    const contextFormat = config.get('contextFormat', 'markdown');
     const client = new client_1.CodexAuraClient(serverUrl);
+    // Helper function to get active workspace root
+    function getActiveWorkspaceRoot() {
+        const activeRootPath = context.globalState.get('codexAura.activeRoot');
+        if (activeRootPath) {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            return workspaceFolders?.find(folder => folder.uri.fsPath === activeRootPath);
+        }
+        // Default to first workspace folder
+        return vscode.workspace.workspaceFolders?.[0];
+    }
     // Command to show graph
     const showGraphCommand = vscode.commands.registerCommand('codexAura.showGraph', async (graphId) => {
         try {
             let selectedGraphId = graphId;
             if (!selectedGraphId) {
                 const graphs = await client.getGraphs();
+                const activeRoot = getActiveWorkspaceRoot();
                 if (graphs.length === 0) {
                     vscode.window.showInformationMessage('No graphs available');
                     return;
                 }
-                const graphItems = graphs.map(graph => ({
+                // Filter graphs by active workspace root if multi-root
+                let filteredGraphs = graphs;
+                if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 1 && activeRoot) {
+                    // For now, show all graphs but indicate which ones belong to active root
+                    // In a real implementation, graphs would have metadata about their root
+                    filteredGraphs = graphs; // TODO: Filter based on graph metadata
+                }
+                const graphItems = filteredGraphs.map(graph => ({
                     label: graph.name,
-                    description: `ID: ${graph.id}`,
+                    description: `ID: ${graph.id}${activeRoot ? ` (Active root: ${activeRoot.name})` : ''}`,
                     graph: graph
                 }));
                 const selectedGraph = await vscode.window.showQuickPick(graphItems, {
@@ -81,8 +102,9 @@ function registerCommands(context) {
     });
     // Command to analyze workspace
     const analyzeCommand = vscode.commands.registerCommand('codexAura.analyze', async () => {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) {
+        (0, extension_1.getTelemetryManager)().trackCommand('analyze');
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
             vscode.window.showErrorMessage('No workspace folder open');
             return;
         }
@@ -93,11 +115,49 @@ function registerCommands(context) {
                 title: "Analyzing codebase...",
                 cancellable: false
             }, async (progress) => {
-                const result = await client.analyze(workspaceFolder.uri.fsPath);
-                vscode.commands.executeCommand('codexAura.showGraph', result.graph_id);
+                // Analyze all workspace roots
+                const analysisPromises = workspaceFolders.map(async (folder) => {
+                    try {
+                        const result = await client.analyze(folder.uri.fsPath);
+                        return { folder: folder.name, graphId: result.graph_id, success: true };
+                    }
+                    catch (error) {
+                        return { folder: folder.name, error: String(error), success: false };
+                    }
+                });
+                const results = await Promise.all(analysisPromises);
+                const successful = results.filter(r => r.success);
+                const failed = results.filter(r => !r.success);
+                if (successful.length > 0) {
+                    // Track graph sizes for telemetry
+                    for (const result of successful) {
+                        if (result.graphId) {
+                            try {
+                                const graphs = await client.getGraphs();
+                                const graph = graphs.find(g => g.id === result.graphId);
+                                if (graph) {
+                                    // In a real implementation, you'd get the actual node count from the graph data
+                                    (0, extension_1.getTelemetryManager)().trackGraphSize(result.graphId, 0); // Placeholder
+                                }
+                            }
+                            catch (error) {
+                                console.log('Failed to track graph size:', error);
+                            }
+                        }
+                    }
+                    // Show graph for the first successful analysis
+                    vscode.commands.executeCommand('codexAura.showGraph', successful[0].graphId);
+                }
+                if (failed.length > 0) {
+                    vscode.window.showWarningMessage(`Analysis failed for ${failed.length} workspace(s): ${failed.map(f => f.folder).join(', ')}`);
+                }
+                if (successful.length > 0) {
+                    vscode.window.showInformationMessage(`Successfully analyzed ${successful.length} workspace(s)`);
+                }
             });
         }
         catch (error) {
+            (0, extension_1.getTelemetryManager)().trackError(error, 'analyze_command');
             vscode.window.showErrorMessage(`Analysis failed: ${error}`);
         }
         finally {
@@ -129,6 +189,27 @@ function registerCommands(context) {
     // Command to open settings
     const openSettingsCommand = vscode.commands.registerCommand('codexAura.openSettings', () => {
         vscode.commands.executeCommand('workbench.action.openSettings', '@ext:codex-aura');
+    });
+    // Command to select active workspace root
+    const selectWorkspaceRootCommand = vscode.commands.registerCommand('codexAura.selectWorkspaceRoot', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length <= 1) {
+            vscode.window.showInformationMessage('Single workspace root detected');
+            return;
+        }
+        const rootItems = workspaceFolders.map(folder => ({
+            label: folder.name,
+            description: folder.uri.fsPath,
+            folder: folder
+        }));
+        const selectedRoot = await vscode.window.showQuickPick(rootItems, {
+            placeHolder: 'Select active workspace root'
+        });
+        if (selectedRoot) {
+            // Store selected root in global state
+            await context.globalState.update('codexAura.activeRoot', selectedRoot.folder.uri.fsPath);
+            vscode.window.showInformationMessage(`Active workspace root set to: ${selectedRoot.label}`);
+        }
     });
     // Command to preview impact of a file
     const previewImpactCommand = vscode.commands.registerCommand('codexAura.previewImpact', async (uri) => {
@@ -230,17 +311,26 @@ function registerCommands(context) {
                     body: JSON.stringify({
                         graph_id: graphId,
                         entry_points: entryPoints.slice(0, 5), // Limit to 5 entry points
-                        depth: 2,
+                        depth: defaultContextDepth,
                         include_code: true,
-                        max_nodes: 50
+                        max_nodes: Math.min(50, Math.floor(defaultMaxTokens / 100)) // Estimate nodes based on tokens
                     }),
                 });
                 if (!contextResponse.ok) {
                     throw new Error(`Failed to get context: ${contextResponse.statusText}`);
                 }
                 const contextData = await contextResponse.json();
-                // Show preview
-                const previewContent = contextData.context_nodes.map(node => `**${node.type}**: ${node.path}\n${node.code ? '```\n' + node.code.slice(0, 200) + '...\n```' : ''}`).join('\n\n');
+                // Show preview based on format
+                let previewContent;
+                if (contextFormat === 'json') {
+                    previewContent = JSON.stringify(contextData, null, 2);
+                }
+                else if (contextFormat === 'text') {
+                    previewContent = contextData.context_nodes.map(node => `${node.type}: ${node.path}\n${node.code || ''}`).join('\n\n');
+                }
+                else { // markdown
+                    previewContent = contextData.context_nodes.map(node => `**${node.type}**: ${node.path}\n${node.code ? '```\n' + node.code.slice(0, 200) + '...\n```' : ''}`).join('\n\n');
+                }
                 const choice = await vscode.window.showInformationMessage(`Context gathered: ${contextData.context_nodes.length} nodes`, 'Copy to Clipboard', 'Insert at Cursor', 'Open in New File');
                 if (choice === 'Copy to Clipboard') {
                     await vscode.env.clipboard.writeText(previewContent);
@@ -268,6 +358,6 @@ function registerCommands(context) {
             vscode.window.showErrorMessage(`Failed to get context: ${error}`);
         }
     });
-    context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand, openSettingsCommand, previewImpactCommand, getContextCommand);
+    context.subscriptions.push(showGraphCommand, analyzeCommand, showNodeDetailsCommand, showDependenciesCommand, showFunctionDependenciesCommand, openSettingsCommand, selectWorkspaceRootCommand, previewImpactCommand, getContextCommand);
 }
 //# sourceMappingURL=commands.js.map

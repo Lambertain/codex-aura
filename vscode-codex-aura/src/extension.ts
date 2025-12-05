@@ -5,10 +5,12 @@ import { registerCommands } from './commands/commands';
 import { CodexAuraClient } from './api/client';
 import { ImpactDecoratorProvider, HoverProvider } from './treeDecorators';
 import { InlineDecorationsProvider } from './decorations';
+import { TelemetryManager } from './telemetry';
 
 let graphViewProvider: GraphViewProvider;
 let statusBarItem: vscode.StatusBarItem;
 let client: CodexAuraClient;
+let telemetryManager: TelemetryManager;
 let statusCheckInterval: NodeJS.Timeout;
 let updateTimeout: NodeJS.Timeout;
 let isAnalyzing = false;
@@ -45,10 +47,39 @@ export function setAnalyzingStatus(analyzing: boolean) {
 export function activate(context: vscode.ExtensionContext) {
   console.log('Codex Aura extension is now active!');
 
+  // Initialize telemetry
+  telemetryManager = new TelemetryManager(context);
+
+  // Show opt-in dialog for telemetry
+  setTimeout(async () => {
+    try {
+      await telemetryManager.showOptInDialog();
+    } catch (error) {
+      console.log('Telemetry opt-in dialog failed:', error);
+    }
+  }, 5000); // Show after 5 seconds to not interrupt user immediately
+
   // Initialize client
   const config = vscode.workspace.getConfiguration('codexAura');
   const serverUrl = config.get<string>('serverUrl', 'http://localhost:8000');
+  const autoAnalyze = config.get<boolean>('autoAnalyze', true);
   client = new CodexAuraClient(serverUrl);
+
+  // Auto-analyze workspace if enabled
+  if (autoAnalyze && vscode.workspace.workspaceFolders) {
+    // Delay auto-analysis to allow extension to fully initialize
+    setTimeout(async () => {
+      try {
+        const graphs = await client.getGraphs();
+        if (graphs.length === 0) {
+          // No graphs exist, analyze the workspace
+          await vscode.commands.executeCommand('codexAura.analyze');
+        }
+      } catch (error) {
+        console.log('Auto-analysis skipped due to server connection issue');
+      }
+    }, 2000);
+  }
 
   // Register commands
   registerCommands(context);
@@ -115,8 +146,31 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('codexAura.serverUrl')) {
         const newConfig = vscode.workspace.getConfiguration('codexAura');
         const newServerUrl = newConfig.get<string>('serverUrl', 'http://localhost:8000');
-        client = new CodexAuraClient(newServerUrl);
-        updateStatus();
+
+        // Validate server URL
+        try {
+          new URL(newServerUrl);
+          client = new CodexAuraClient(newServerUrl);
+          updateStatus();
+        } catch (error) {
+          vscode.window.showErrorMessage(`Invalid server URL: ${newServerUrl}`);
+        }
+      }
+
+      if (e.affectsConfiguration('codexAura.defaultContextDepth')) {
+        const newConfig = vscode.workspace.getConfiguration('codexAura');
+        const depth = newConfig.get<number>('defaultContextDepth', 2);
+        if (depth < 1 || depth > 10) {
+          vscode.window.showWarningMessage('Context depth must be between 1 and 10');
+        }
+      }
+
+      if (e.affectsConfiguration('codexAura.defaultMaxTokens')) {
+        const newConfig = vscode.workspace.getConfiguration('codexAura');
+        const tokens = newConfig.get<number>('defaultMaxTokens', 8000);
+        if (tokens < 1000 || tokens > 50000) {
+          vscode.window.showWarningMessage('Max tokens must be between 1000 and 50000');
+        }
       }
     })
   );
@@ -124,6 +178,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function getGraphViewProvider(): GraphViewProvider {
   return graphViewProvider;
+}
+
+export function getTelemetryManager(): TelemetryManager {
+  return telemetryManager;
 }
 
 function getNodeViewHtml(webview: vscode.Webview): string {

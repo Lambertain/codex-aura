@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.setAnalyzingStatus = setAnalyzingStatus;
 exports.activate = activate;
 exports.getGraphViewProvider = getGraphViewProvider;
+exports.getTelemetryManager = getTelemetryManager;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const graphView_1 = require("./views/graphView");
@@ -44,9 +45,11 @@ const commands_1 = require("./commands/commands");
 const client_1 = require("./api/client");
 const treeDecorators_1 = require("./treeDecorators");
 const decorations_1 = require("./decorations");
+const telemetry_1 = require("./telemetry");
 let graphViewProvider;
 let statusBarItem;
 let client;
+let telemetryManager;
 let statusCheckInterval;
 let updateTimeout;
 let isAnalyzing = false;
@@ -80,10 +83,38 @@ function setAnalyzingStatus(analyzing) {
 }
 function activate(context) {
     console.log('Codex Aura extension is now active!');
+    // Initialize telemetry
+    telemetryManager = new telemetry_1.TelemetryManager(context);
+    // Show opt-in dialog for telemetry
+    setTimeout(async () => {
+        try {
+            await telemetryManager.showOptInDialog();
+        }
+        catch (error) {
+            console.log('Telemetry opt-in dialog failed:', error);
+        }
+    }, 5000); // Show after 5 seconds to not interrupt user immediately
     // Initialize client
     const config = vscode.workspace.getConfiguration('codexAura');
     const serverUrl = config.get('serverUrl', 'http://localhost:8000');
+    const autoAnalyze = config.get('autoAnalyze', true);
     client = new client_1.CodexAuraClient(serverUrl);
+    // Auto-analyze workspace if enabled
+    if (autoAnalyze && vscode.workspace.workspaceFolders) {
+        // Delay auto-analysis to allow extension to fully initialize
+        setTimeout(async () => {
+            try {
+                const graphs = await client.getGraphs();
+                if (graphs.length === 0) {
+                    // No graphs exist, analyze the workspace
+                    await vscode.commands.executeCommand('codexAura.analyze');
+                }
+            }
+            catch (error) {
+                console.log('Auto-analysis skipped due to server connection issue');
+            }
+        }, 2000);
+    }
     // Register commands
     (0, commands_1.registerCommands)(context);
     // Register WebView provider for graph visualization
@@ -127,13 +158,37 @@ function activate(context) {
         if (e.affectsConfiguration('codexAura.serverUrl')) {
             const newConfig = vscode.workspace.getConfiguration('codexAura');
             const newServerUrl = newConfig.get('serverUrl', 'http://localhost:8000');
-            client = new client_1.CodexAuraClient(newServerUrl);
-            updateStatus();
+            // Validate server URL
+            try {
+                new URL(newServerUrl);
+                client = new client_1.CodexAuraClient(newServerUrl);
+                updateStatus();
+            }
+            catch (error) {
+                vscode.window.showErrorMessage(`Invalid server URL: ${newServerUrl}`);
+            }
+        }
+        if (e.affectsConfiguration('codexAura.defaultContextDepth')) {
+            const newConfig = vscode.workspace.getConfiguration('codexAura');
+            const depth = newConfig.get('defaultContextDepth', 2);
+            if (depth < 1 || depth > 10) {
+                vscode.window.showWarningMessage('Context depth must be between 1 and 10');
+            }
+        }
+        if (e.affectsConfiguration('codexAura.defaultMaxTokens')) {
+            const newConfig = vscode.workspace.getConfiguration('codexAura');
+            const tokens = newConfig.get('defaultMaxTokens', 8000);
+            if (tokens < 1000 || tokens > 50000) {
+                vscode.window.showWarningMessage('Max tokens must be between 1000 and 50000');
+            }
         }
     }));
 }
 function getGraphViewProvider() {
     return graphViewProvider;
+}
+function getTelemetryManager() {
+    return telemetryManager;
 }
 function getNodeViewHtml(webview) {
     return `

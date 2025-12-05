@@ -36,6 +36,7 @@
       {"command": "codexAura.showDependencies", "title": "Show Dependencies"},
       {"command": "codexAura.showFunctionDependencies", "title": "Show Function Dependencies"},
       {"command": "codexAura.openSettings", "title": "Open Settings"},
+      {"command": "codexAura.selectWorkspaceRoot", "title": "Select Active Workspace Root"},
       {"command": "codexAura.previewImpact", "title": "Preview Impact of This File"},
       {"command": "codexAura.getContext", "title": "Get Context for Task"}
     ],
@@ -65,12 +66,18 @@
       "properties": {
         "codexAura.serverUrl": {
           "type": "string",
-          "default": "http://localhost:8000"
+          "default": "http://localhost:8000",
+          "description": "URL of the Codex Aura server"
         },
-        "codexAura.enableDecorations": {
+        "codexAura.autoAnalyze": {
           "type": "boolean",
           "default": true,
-          "description": "Enable inline decorations in editors"
+          "description": "Automatically analyze workspace on activation"
+        },
+        "codexAura.showInlineDecorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline decorations in editors"
         },
         "codexAura.enableImpactBadges": {
           "type": "boolean",
@@ -81,6 +88,31 @@
           "type": "boolean",
           "default": true,
           "description": "Show impact tooltips when hovering over files"
+        },
+        "codexAura.defaultContextDepth": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Default depth for context gathering"
+        },
+        "codexAura.defaultMaxTokens": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 1000,
+          "maximum": 50000,
+          "description": "Default maximum tokens for context"
+        },
+        "codexAura.contextFormat": {
+          "type": "string",
+          "default": "markdown",
+          "enum": ["markdown", "json", "text"],
+          "description": "Format for context output"
+        },
+        "codexAura.telemetryEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable anonymous telemetry for improving the extension"
         }
       }
     }
