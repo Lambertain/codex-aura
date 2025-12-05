@@ -30,6 +30,9 @@ class Node(BaseModel):
         path: Relative path to the file containing this node.
         lines: Optional line range [start, end] where the entity is defined.
         docstring: Optional documentation string extracted from the code.
+        blame: Optional git blame information.
+
+    Extension fields starting with 'x-' are allowed for custom extensions.
     """
 
     id: str
@@ -39,6 +42,10 @@ class Node(BaseModel):
     lines: Optional[List[int]] = None
     docstring: Optional[str] = None
     blame: Optional[BlameInfo] = None
+
+    class Config:
+        """Pydantic configuration to allow extension fields."""
+        extra = "allow"  # Allow additional fields not defined in the model
 
     @field_validator("lines")
     @classmethod

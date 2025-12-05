@@ -16,13 +16,19 @@
     },
     "type": {
       "type": "string",
-      "enum": ["IMPORTS", "CALLS", "EXTENDS"],
-      "description": "Type of relationship between nodes"
+      "pattern": "^(IMPORTS|CALLS|EXTENDS|CUSTOM_.*)$",
+      "description": "Type of relationship between nodes. Standard types: IMPORTS, CALLS, EXTENDS. Custom types must start with CUSTOM_"
     },
     "line": {
       "type": "integer",
       "minimum": 0,
       "description": "Line number where the relationship is defined"
     }
-  }
+  },
+  "patternProperties": {
+    "^x-": {
+      "description": "Custom extension fields must start with 'x-' prefix"
+    }
+  },
+  "additionalProperties": false
 }

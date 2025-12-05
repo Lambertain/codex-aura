@@ -42,6 +42,12 @@
       "description": "Git blame information for authorship tracking"
     }
   },
+  "patternProperties": {
+    "^x-": {
+      "description": "Custom extension fields must start with 'x-' prefix"
+    }
+  },
+  "additionalProperties": false,
   "definitions": {
     "BlameInfo": {
       "type": "object",

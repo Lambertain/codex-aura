@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class EdgeType(str, Enum):
@@ -12,6 +12,14 @@ class EdgeType(str, Enum):
     IMPORTS = "IMPORTS"
     CALLS = "CALLS"
     EXTENDS = "EXTENDS"
+
+    @classmethod
+    def _missing_(cls, value):
+        """Allow custom edge types that start with CUSTOM_."""
+        if isinstance(value, str) and value.startswith("CUSTOM_"):
+            # Create a new enum member dynamically
+            return cls(value)
+        return None
 
 
 class Edge(BaseModel):
@@ -23,11 +31,17 @@ class Edge(BaseModel):
     Attributes:
         source: ID of the source node.
         target: ID of the target node.
-        type: Type of relationship (currently only IMPORTS).
+        type: Type of relationship (IMPORTS, CALLS, EXTENDS, or CUSTOM_*).
         line: Optional line number where the relationship is defined.
+
+    Extension fields starting with 'x-' are allowed for custom extensions.
     """
 
     source: str
     target: str
     type: EdgeType
     line: Optional[int] = None
+
+    class Config:
+        """Pydantic configuration to allow extension fields."""
+        extra = "allow"  # Allow additional fields not defined in the model

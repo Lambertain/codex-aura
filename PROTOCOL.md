@@ -289,3 +289,56 @@ New edge types can be defined by extending the EdgeType enum and implementing co
 ### API Extensions
 
 New API endpoints can be added following RESTful conventions and the existing response format patterns.
+
+## Protocol Extensions
+
+### Custom Fields
+
+Both Node and Edge objects support custom extension fields that must start with the `x-` prefix:
+
+```json
+{
+  "id": "node_123",
+  "type": "function",
+  "name": "process_data",
+  "path": "src/utils.py",
+  "x-custom-field": "value",
+  "x-company-specific": {
+    "metadata": "additional info",
+    "tags": ["important", "legacy"]
+  }
+}
+```
+
+**Rules:**
+- Custom field names must start with `x-`
+- Custom fields can contain any valid JSON value
+- Existing implementations must ignore unknown custom fields
+- Backwards compatibility is guaranteed
+
+### Custom Edge Types
+
+Edge types can be extended beyond the standard types (IMPORTS, CALLS, EXTENDS):
+
+```json
+{
+  "source": "node_123",
+  "target": "node_456",
+  "type": "CUSTOM_ANNOTATION",
+  "line": 15,
+  "x-annotation-type": "deprecated"
+}
+```
+
+**Rules:**
+- Custom edge types must start with `CUSTOM_`
+- Implementations should handle unknown custom edge types gracefully
+- Standard edge types remain unchanged
+- Backwards compatibility is maintained
+
+### Extension Guidelines
+
+1. **Naming Convention**: All extensions must use the `x-` prefix for fields and `CUSTOM_` prefix for edge types
+2. **Backwards Compatibility**: Extensions must not break existing functionality
+3. **Documentation**: Custom extensions should be documented in implementation-specific documentation
+4. **Validation**: While extensions are allowed, implementations may choose to validate them according to their own rules
