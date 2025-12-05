@@ -42,3 +42,18 @@ jobs:
           track-metrics: true
           upload-artifact: true
           comment-on-pr: 'false'
+
+  test-monorepo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          paths: |
+            src
+            tests
+            examples
+          cross-package-deps: true
+          upload-artifact: true
+          artifact-name: 'codex-aura-monorepo-graph'
+          comment-on-pr: 'false'

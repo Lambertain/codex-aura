@@ -4,7 +4,8 @@ This GitHub Action analyzes your codebase and generates a dependency graph using
 
 ## Inputs
 
-- `path`: Path to analyze (default: '.')
+- `path`: Path to analyze (default: '.', deprecated: use `paths` for monorepo support)
+- `paths`: Paths to analyze (one per line for monorepo support)
 - `edge-types`: Edge types to extract (default: 'imports,calls,extends')
 - `output`: Output file path (default: 'codex-aura-graph.json')
 - `comment-on-pr`: Add comment to PR with results (default: 'false')
@@ -13,6 +14,7 @@ This GitHub Action analyzes your codebase and generates a dependency graph using
 - `artifact-name`: Name for the uploaded artifact (default: 'codex-aura-graph')
 - `artifact-retention-days`: Retention days for artifact (default: '30')
 - `track-metrics`: Track metrics for trend analysis (default: 'false')
+- `cross-package-deps`: Analyze dependencies between packages in monorepo (default: 'false')
 
 ## Outputs
 
@@ -81,6 +83,51 @@ jobs:
           track-metrics: true
           upload-artifact: true
           comment-on-pr: 'true'
+```
+
+### Monorepo Support (E7-5)
+
+```yaml
+name: Analyze Monorepo Packages
+on: [push, pull_request]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codex-aura/analyze-action@v1
+        with:
+          paths: |
+            packages/auth
+            packages/api
+            packages/shared
+          cross-package-deps: true
+          comment-on-pr: 'true'
+          upload-artifact: true
+```
+
+### Matrix Strategy for Monorepo (E7-6)
+
+```yaml
+name: Analyze Monorepo with Matrix
+on: [push, pull_request]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [auth, api, frontend, shared]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codex-aura/analyze-action@v1
+        with:
+          path: packages/${{ matrix.package }}
+          output: codex-aura-${{ matrix.package }}-graph.json
+          comment-on-pr: 'true'
+          upload-artifact: true
+          artifact-name: codex-aura-${{ matrix.package }}-graph
 ```
 
 ### Advanced Usage
