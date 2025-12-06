@@ -13,6 +13,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from contextlib import asynccontextmanager
 
 from ..analyzer.python import PythonAnalyzer
 from ..models.graph import Graph, save_graph
@@ -27,7 +28,7 @@ from ..tracing import configure_tracing, instrument_app, get_tracer
 from ..analytics import analytics
 from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset
-from ..webhooks import WebhookQueue, WebhookProcessor
+from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
 from collections import deque
@@ -85,6 +86,7 @@ app = FastAPI(
         "name": "MIT",
         "url": "https://opensource.org/licenses/MIT",
     },
+    lifespan=lifespan,
 )
 
 # Initialize storage
@@ -138,8 +140,22 @@ graph_updater = GraphUpdater(storage, PythonAnalyzer())
 webhook_queue = WebhookQueue()
 webhook_processor = WebhookProcessor(graph_updater=graph_updater)
 
-# Start webhook processing
-webhook_queue.start_processing(webhook_processor.process_event)
+# Set global webhook processor for arq workers
+set_webhook_processor(webhook_processor)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    # Startup
+    await webhook_queue.initialize()
+    logger.info("Webhook queue initialized")
+
+    yield
+
+    # Shutdown
+    await webhook_queue.close()
+    logger.info("Webhook queue closed")
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -532,7 +548,7 @@ async def github_webhook(
     # Normalize event
     normalized_event = normalize_github_event(event, data)
 
-    # Queue for processing
+    # Queue for processing using Redis/arq
     await webhook_queue.enqueue(normalized_event)
 
     return {"status": "queued"}
@@ -557,7 +573,7 @@ async def gitlab_webhook(
     # Normalize event
     normalized_event = normalize_gitlab_event(event, data)
 
-    # Queue for processing
+    # Queue for processing using Redis/arq
     await webhook_queue.enqueue(normalized_event)
 
     return {"status": "queued"}

@@ -18,15 +18,11 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.45b0",
     "opentelemetry-exporter-jaeger>=1.21.0",
     "psutil>=5.9.0",
-<<<<<<< HEAD
-    "radon>=6.0.1",
-    "tiktoken>=0.5.0"
-=======
+    "arq>=0.25.0",
     "neo4j>=5.15.0",
     "openai>=1.0.0",
     "tiktoken>=0.5.0",
     "qdrant-client>=1.7.0"
->>>>>>> e4efd6fe40da4eb81321fb6d180f94a37ef6b61e
 ]
 
 [project.scripts]
@@ -53,14 +49,11 @@ opentelemetry-distro = "^0.45b0"
 opentelemetry-instrumentation-fastapi = "^0.45b0"
 opentelemetry-exporter-jaeger = "^1.21.0"
 psutil = "^5.9.0"
-<<<<<<< HEAD
-radon = "^6.0.1"
-=======
+arq = "^0.25.0"
 neo4j = "^5.15.0"
 openai = "^1.0.0"
 tiktoken = "^0.5.0"
 qdrant-client = "^1.7.0"
->>>>>>> e4efd6fe40da4eb81321fb6d180f94a37ef6b61e
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
