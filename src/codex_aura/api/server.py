@@ -31,6 +31,7 @@ from ..analytics import analytics
 from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset, TokenCounter
 from ..budgeting.analytics import BudgetAnalyticsService
+from ..context import SemanticRankingEngine, rank_context
 from ..api.budget import router as budget_router, get_current_user
 from ..api.billing import router as billing_router
 from ..api.middleware.rate_limit import get_rate_limit
@@ -443,6 +444,52 @@ class TokenBudgetedContextResponse(BaseModel):
 
     context: str
     stats: dict
+
+
+class SmartContextRequest(BaseModel):
+    """Request model for smart context endpoint."""
+
+    repo_id: str
+    task: str
+    max_tokens: int
+    model: str = "gpt-4o"
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v: int) -> int:
+        """Validate max_tokens is positive."""
+        if v <= 0:
+            raise ValueError("max_tokens must be positive")
+        return v
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v: str) -> str:
+        """Validate model is supported."""
+        supported_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "claude-3", "claude-3-5-sonnet"]
+        if v not in supported_models:
+            raise ValueError(f"model must be one of: {supported_models}")
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "repo_id": "repo_abc123",
+                "task": "Fix JWT validation bug in authentication module",
+                "max_tokens": 8000,
+                "model": "gpt-4o"
+            }
+        }
+
+
+class SmartContextResponse(BaseModel):
+    """Response model for smart context endpoint."""
+
+    nodes: list[dict]
+    total_tokens: int
+    graph_expansion: dict
+    semantic_matches: list[dict]
+    model: str
 
 
 class AffectedFile(BaseModel):
@@ -1624,134 +1671,157 @@ async def get_dependencies(
     )
 
 
-@app.post("/api/v1/context", response_model=ContextResponse)
+@app.post("/api/v1/context", response_model=SmartContextResponse)
 @limiter.limit(lambda: get_rate_limit(get_current_user()))
-async def get_context(request: Request, body: ContextRequest, current_user=Depends(get_current_user)):
+async def get_smart_context(request: Request, body: SmartContextRequest, current_user=Depends(get_current_user)):
     """
-    Get contextual nodes around entry points.
+    Smart Context API - Unified endpoint for optimal context selection.
 
-    Performs breadth-first search traversal from specified entry points
-    to gather relevant context nodes within the specified depth.
+    Performs semantic search, graph expansion, ranking, token budgeting,
+    and summarization to provide the most relevant context for a task.
 
-    Useful for understanding the code context around specific functions
-    or classes, with relevance scoring based on distance from entry points.
+    Returns structured context optimized for LLM consumption.
     """
-    with tracer.start_as_current_span("get_context") as span:
-        span.set_attribute("graph_id", body.graph_id)
-        span.set_attribute("entry_points", str(body.entry_points))
-        span.set_attribute("depth", body.depth)
-        span.set_attribute("max_nodes", body.max_nodes)
-        span.set_attribute("include_code", body.include_code)
+    with tracer.start_as_current_span("get_smart_context") as span:
+        span.set_attribute("repo_id", body.repo_id)
+        span.set_attribute("task", body.task[:100])  # Truncate for tracing
+        span.set_attribute("max_tokens", body.max_tokens)
+        span.set_attribute("model", body.model)
 
-        # Validate depth
-        if body.depth < 1 or body.depth > 5:
-            raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")
+        start_time = time.time()
 
-        # Validate max_nodes
-        if body.max_nodes < 1 or body.max_nodes > 100:
-            raise HTTPException(status_code=400, detail="max_nodes must be between 1 and 100")
+        # Validate budget parameters
+        try:
+            validate_budget_params(body.model, body.max_tokens)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-        # Load graph
-        graph = storage.load_graph(body.graph_id)
+        # Load graph by repo_id
+        graph = storage.load_graph(body.repo_id)
         if not graph:
-            raise HTTPException(status_code=404, detail="Graph not found")
+            raise HTTPException(status_code=404, detail=f"Repository '{body.repo_id}' not found")
 
-    # Validate entry points exist
-    for entry_point in body.entry_points:
-        if not any(n.id == entry_point for n in graph.nodes):
-            raise HTTPException(status_code=404, detail=f"Entry point '{entry_point}' not found")
+        # Step 1: Semantic search
+        embedding_service = EmbeddingService()
+        vector_store = VectorStore()
+        semantic_search = SemanticSearch(embedding_service, vector_store)
 
-    # Collect all reachable nodes using BFS from all entry points
-    all_visited = set()
-    node_distances = {}  # node_id -> min_distance
-
-    for entry_point in body.entry_points:
-        visited, _ = traverse_dependencies(graph, entry_point, body.depth, "outgoing")
-        for node_id in visited:
-            if node_id not in all_visited:
-                # Calculate distance from nearest entry point
-                min_distance = float('inf')
-                for ep in body.entry_points:
-                    if ep == node_id:
-                        min_distance = 0
-                        break
-                    # BFS to find distance
-                    dist = _calculate_distance(graph, ep, node_id, body.depth)
-                    if dist is not None:
-                        min_distance = min(min_distance, dist)
-
-                if min_distance != float('inf'):
-                    node_distances[node_id] = min_distance
-                    all_visited.add(node_id)
-
-    # Sort nodes by distance (ascending)
-    sorted_nodes = sorted(all_visited, key=lambda n: node_distances.get(n, float('inf')))
-
-    # Apply max_nodes limit
-    truncated = len(sorted_nodes) > body.max_nodes
-    if truncated:
-        sorted_nodes = sorted_nodes[:body.max_nodes]
-
-    # Build context nodes
-    context_nodes = []
-    total_tokens = 0
-    token_counter = TokenCounter()
-
-    for node_id in sorted_nodes:
-        node = next(n for n in graph.nodes if n.id == node_id)
-        node_dict = node.model_dump()
-
-        context_node = ContextNode(
-            id=node.id,
-            type=node.type,
-            path=node.path,
-            code=node_dict.get("code") if body.include_code else None,
-            relevance=1.0 / (1 + node_distances.get(node_id, 0))  # Higher relevance for closer nodes
+        sem_results = await semantic_search.search(
+            repo_id=body.repo_id,
+            query=body.task,
+            limit=50  # Get more for ranking
         )
-        context_nodes.append(context_node)
 
-        # Count tokens for this node
-        node_tokens = token_counter.count_node(node, "gpt-4")  # Use GPT-4 as default model
-        total_tokens += node_tokens
+        # Step 2: Graph expansion - get all nodes from graph
+        # In practice, this might be filtered based on semantic results
+        graph_results = graph.nodes
 
-    # Update metrics
-    CONTEXT_REQUESTS_TOTAL.inc()
-    CONTEXT_NODES_RETURNED.labels(truncated=str(truncated).lower()).observe(len(context_nodes))
+        # Step 3: Ranking with semantic ranking engine
+        ranked_nodes = rank_context(
+            query=body.task,
+            sem_results=sem_results,
+            graph_results=graph_results,
+            focal_nodes=[],  # No specific focal nodes for general task
+            model=body.model
+        )
 
-    # Update span with timing and token metrics
-    span.set_attribute("context_nodes_returned", len(context_nodes))
-    span.set_attribute("total_nodes", len(all_visited))
-    span.set_attribute("truncated", truncated)
-    span.set_attribute("total_tokens", total_tokens)
-    span.set_attribute("processing_time_ms", int((time.time() - time.time()) * 1000))  # Will be set by tracer
+        # Step 4: Token budgeting
+        allocator = BudgetAllocator(TokenCounter())
+        selected_nodes = allocator.allocate(
+            nodes=[type('RankedNode', (), {
+                'id': rn.node.id,
+                'score': rn.combined_score,
+                'tokens': rn.tokens,
+                'content': getattr(rn.node, 'content', ''),
+                'type': rn.node.type,
+                'name': rn.node.name,
+                'path': rn.node.path
+            })() for rn in ranked_nodes],
+            max_tokens=body.max_tokens,
+            strategy="adaptive",
+            model=body.model
+        )
 
-    # Track analytics
-    analytics.track_context_request(
-        graph_id=body.graph_id,
-        entry_points_count=len(body.entry_points),
-        depth=body.depth,
-        max_nodes=body.max_nodes,
-        nodes_returned=len(context_nodes),
-        truncated=truncated
-    )
+        # Step 5: Build response
+        nodes_data = []
+        total_tokens = 0
 
-    logger.info(
-        "context_retrieved",
-        graph_id=body.graph_id,
-        entry_points=body.entry_points,
-        depth=body.depth,
-        max_nodes=body.max_nodes,
-        context_nodes_returned=len(context_nodes),
-        total_nodes=len(all_visited),
-        truncated=truncated,
-        total_tokens=total_tokens
-    )
+        for node in selected_nodes.selected_nodes:
+            # Find original ranked node for detailed scores
+            ranked_node = next((rn for rn in ranked_nodes if rn.node.id == node.id), None)
+            if ranked_node:
+                node_data = {
+                    "id": node.id,
+                    "type": node.type,
+                    "name": node.name,
+                    "path": node.path,
+                    "content": getattr(node, 'content', ''),
+                    "semantic_score": ranked_node.semantic_score,
+                    "graph_score": ranked_node.graph_score,
+                    "combined_score": ranked_node.combined_score,
+                    "tokens": ranked_node.tokens
+                }
+                nodes_data.append(node_data)
+                total_tokens += ranked_node.tokens
 
-    return ContextResponse(
-        context_nodes=context_nodes,
-        total_nodes=len(all_visited),
-        truncated=truncated
-    )
+        # Graph expansion stats
+        graph_expansion = {
+            "total_nodes_analyzed": len(graph_results),
+            "nodes_ranked": len(ranked_nodes),
+            "nodes_selected": len(selected_nodes.selected_nodes),
+            "strategy_used": selected_nodes.strategy_used.value
+        }
+
+        # Semantic matches
+        semantic_matches = [
+            {
+                "fqn": result.chunk.file_path if result.chunk.type == "file" else f"{result.chunk.file_path}::{result.chunk.name}",
+                "score": result.score,
+                "type": result.chunk.type
+            }
+            for result in sem_results[:10]  # Top 10 semantic matches
+        ]
+
+        processing_time_ms = int((time.time() - start_time) * 1000)
+
+        # Update metrics
+        CONTEXT_REQUESTS_TOTAL.inc()
+        CONTEXT_NODES_RETURNED.labels(truncated="false").observe(len(nodes_data))
+
+        # Update span
+        span.set_attribute("nodes_selected", len(nodes_data))
+        span.set_attribute("total_tokens", total_tokens)
+        span.set_attribute("processing_time_ms", processing_time_ms)
+
+        # Track analytics
+        analytics.track_context_request(
+            graph_id=body.repo_id,
+            entry_points_count=0,  # Not applicable for smart context
+            depth=0,  # Not applicable
+            max_nodes=0,  # Not applicable
+            nodes_returned=len(nodes_data),
+            truncated=False
+        )
+
+        logger.info(
+            "smart_context_generated",
+            repo_id=body.repo_id,
+            task=body.task[:50],
+            max_tokens=body.max_tokens,
+            model=body.model,
+            nodes_selected=len(nodes_data),
+            total_tokens=total_tokens,
+            processing_time_ms=processing_time_ms,
+            strategy=selected_nodes.strategy_used.value
+        )
+
+        return SmartContextResponse(
+            nodes=nodes_data,
+            total_tokens=total_tokens,
+            graph_expansion=graph_expansion,
+            semantic_matches=semantic_matches,
+            model=body.model
+        )
 
 
 @app.post("/api/v1/token-context", response_model=TokenBudgetedContextResponse)
