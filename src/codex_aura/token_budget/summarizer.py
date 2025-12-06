@@ -1,68 +1,165 @@
 """Content summarization for token budget management."""
 
+from enum import Enum
 from typing import Optional
 
 from ..models.node import Node
 from .counter import TokenCounter
 
 
+class SummarizationLevel(str, Enum):
+    FULL = "full"           # Complete content
+    SIGNATURE = "signature"  # Signature + docstring only
+    STUB = "stub"           # Just signature
+    REFERENCE = "reference"  # Just name and path
+
+
 class ContentSummarizer:
-    """Summarizes content to fit within token budgets."""
+    """
+    Summarize code content to fit token budgets.
 
-    def __init__(self, counter: TokenCounter = None, llm=None):
-        self.counter = counter or TokenCounter()
-        self.llm = llm  # Optional LLM for advanced summarization
+    Strategies (from most to least detail):
+    1. FULL: Include everything
+    2. SIGNATURE: Signature + docstring + type hints
+    3. STUB: Just the signature
+    4. REFERENCE: Just a reference to the node
+    """
 
-    async def summarize_node(
+    def __init__(self, token_counter: TokenCounter, llm_client: "LLMClient" = None):
+        self.counter = token_counter
+        self.llm = llm_client
+
+    def summarize_node(
         self,
-        node: Node,
-        target_tokens: int
+        node: "Node",
+        target_tokens: int,
+        model: str = "gpt-4",
+        level: SummarizationLevel = None
     ) -> str:
-        """Summarize node content to fit token budget."""
-        content = getattr(node, 'content', '')
-        if self.counter.count(content) <= target_tokens:
-            return content
+        """
+        Summarize node to fit within target tokens.
 
-        # Strategy 1: Keep signature + docstring only
+        Automatically selects appropriate level if not specified.
+        """
+        full_content = self._format_full(node)
+        full_tokens = self.counter.count(full_content, model)
+
+        # If already fits, return full
+        if full_tokens <= target_tokens:
+            return full_content
+
+        # Auto-select level if not specified
+        if level is None:
+            level = self._select_level(node, target_tokens, model)
+
+        if level == SummarizationLevel.FULL:
+            return self.counter.truncate_to_tokens(full_content, target_tokens, model)
+        elif level == SummarizationLevel.SIGNATURE:
+            return self._format_signature(node, target_tokens, model)
+        elif level == SummarizationLevel.STUB:
+            return self._format_stub(node)
+        else:
+            return self._format_reference(node)
+
+    def _format_full(self, node: "Node") -> str:
+        """Full content with file path context."""
+        return f"# {node.path}:{node.start_line}\n{node.content}"
+
+    def _format_signature(
+        self,
+        node: "Node",
+        target_tokens: int,
+        model: str
+    ) -> str:
+        """Signature + docstring format."""
+        parts = [f"# {node.path}:{node.start_line}"]
+
         if node.type == "function":
-            signature = getattr(node, 'signature', '')
-            docstring = getattr(node, 'docstring', '') or ''
-            summary = f"{signature}\n    '''{docstring}'''"
-            if self.counter.count(summary) <= target_tokens:
-                return summary
+            parts.append(node.signature or f"def {node.name}(...):")
+            if node.docstring:
+                # Include as much docstring as fits
+                doc_tokens = target_tokens - self.counter.count("\n".join(parts), model) - 10
+                if doc_tokens > 50:
+                    truncated_doc = self.counter.truncate_to_tokens(
+                        node.docstring, doc_tokens, model
+                    )
+                    parts.append(f'    """{truncated_doc}"""')
+            parts.append("    ...")
 
-        # Strategy 2: LLM summarization
-        if self.llm:
-            prompt = f"Summarize this code in {target_tokens} tokens:\n{content}"
-            try:
-                summary = await self.llm.generate(prompt, max_tokens=target_tokens)
-                return summary
-            except Exception:
-                # Fallback if LLM fails
-                pass
+        elif node.type == "class":
+            parts.append(f"class {node.name}:")
+            if node.docstring:
+                doc_tokens = target_tokens - self.counter.count("\n".join(parts), model) - 10
+                if doc_tokens > 50:
+                    truncated_doc = self.counter.truncate_to_tokens(
+                        node.docstring, doc_tokens, model
+                    )
+                    parts.append(f'    """{truncated_doc}"""')
 
-        # Strategy 3: Simple truncation as fallback
-        return self._truncate_content(content, target_tokens)
+            # Include method signatures
+            methods = getattr(node, 'methods', [])[:5]  # Top 5 methods
+            for method in methods:
+                parts.append(f"    {method.signature}")
+            if len(methods) > 5:
+                parts.append(f"    # ... and {len(methods) - 5} more methods")
 
-    def _truncate_content(self, content: str, target_tokens: int) -> str:
-        """Simple content truncation fallback."""
-        if self.counter.count(content) <= target_tokens:
-            return content
+        return "\n".join(parts)
 
-        # Binary search for the right length
-        left, right = 0, len(content)
-        while left < right:
-            mid = (left + right + 1) // 2
-            if self.counter.count(content[:mid]) <= target_tokens:
-                left = mid
-            else:
-                right = mid - 1
+    def _format_stub(self, node: "Node") -> str:
+        """Minimal stub format."""
+        return f"# {node.path}:{node.start_line}\n{node.signature or node.name}"
 
-        truncated = content[:left]
-        # Try to end at a complete line
-        if '\n' in truncated:
-            last_newline = truncated.rfind('\n')
-            if last_newline > len(truncated) * 0.8:  # Don't cut too much
-                truncated = truncated[:last_newline]
+    def _format_reference(self, node: "Node") -> str:
+        """Just a reference."""
+        return f"# See: {node.fqn} in {node.path}"
 
-        return truncated + "\n# ... (truncated)"
+    def _select_level(
+        self,
+        node: "Node",
+        target_tokens: int,
+        model: str
+    ) -> SummarizationLevel:
+        """Auto-select appropriate summarization level."""
+        # Try each level from most to least detailed
+        levels = [
+            SummarizationLevel.SIGNATURE,
+            SummarizationLevel.STUB,
+            SummarizationLevel.REFERENCE
+        ]
+
+        for level in levels:
+            content = self.summarize_node(node, target_tokens * 2, model, level)
+            if self.counter.count(content, model) <= target_tokens:
+                return level
+
+        return SummarizationLevel.REFERENCE
+
+    async def llm_summarize(
+        self,
+        node: "Node",
+        target_tokens: int,
+        model: str = "gpt-4"
+    ) -> str:
+        """
+        Use LLM to intelligently summarize code.
+
+        More expensive but produces better summaries.
+        """
+        if not self.llm:
+            return self.summarize_node(node, target_tokens, model, SummarizationLevel.SIGNATURE)
+
+        prompt = f"""Summarize this code in approximately {target_tokens} tokens.
+Keep the most important functionality, type signatures, and key logic.
+```{node.language or 'python'}
+{node.content}
+```
+
+Provide a concise summary that preserves the essential information."""
+
+        response = await self.llm.generate(
+            prompt,
+            max_tokens=target_tokens + 50,
+            model="gpt-3.5-turbo"  # Use cheaper model for summarization
+        )
+
+        return f"# {node.path} (summarized)\n{response}"
