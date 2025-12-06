@@ -27,6 +27,9 @@ from ..tracing import configure_tracing, instrument_app, get_tracer
 from ..analytics import analytics
 from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset
+from ..webhooks import WebhookQueue, WebhookProcessor
+from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
+from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
 from collections import deque
 
 # Configure structured logging
@@ -86,6 +89,57 @@ app = FastAPI(
 
 # Initialize storage
 storage = SQLiteStorage()
+
+
+class GraphUpdater:
+    """Updates dependency graphs based on file changes."""
+
+    def __init__(self, storage, analyzer):
+        self.storage = storage
+        self.analyzer = analyzer
+
+    async def update_files(self, repo_id: str, changed_files: list[str]) -> None:
+        """Update graph for repository with changed files."""
+        try:
+            # Load existing graph
+            existing_graph = self.storage.load_graph(repo_id)
+            if not existing_graph:
+                logger.warning(f"No existing graph found for repo {repo_id}")
+                return
+
+            # For now, do a full re-analysis (incremental updates would be more complex)
+            # In a real implementation, we'd only re-analyze changed files and their dependencies
+            repo_path = Path(existing_graph.repository.path)
+            if not repo_path.exists():
+                logger.error(f"Repository path {repo_path} no longer exists")
+                return
+
+            logger.info(f"Re-analyzing repository {repo_id} due to {len(changed_files)} changed files")
+
+            # Re-analyze the repository
+            new_graph = self.analyzer.analyze(repo_path)
+
+            # Generate new graph ID and save
+            import uuid
+            new_graph_id = f"g_{uuid.uuid4().hex[:12]}"
+            self.storage.save_graph(new_graph, new_graph_id)
+
+            logger.info(f"Updated graph for repo {repo_id}: {existing_graph.id} -> {new_graph_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to update graph for repo {repo_id}: {e}")
+            raise
+
+
+# Initialize graph updater
+graph_updater = GraphUpdater(storage, PythonAnalyzer())
+
+# Initialize webhook components
+webhook_queue = WebhookQueue()
+webhook_processor = WebhookProcessor(graph_updater=graph_updater)
+
+# Start webhook processing
+webhook_queue.start_processing(webhook_processor.process_event)
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -456,6 +510,57 @@ async def info():
         "supported_edge_types": ["IMPORTS", "CALLS", "EXTENDS"],
         "storage_backend": "sqlite"
     }
+
+
+# Webhook endpoints
+@app.post("/webhooks/github/{repo_id}")
+async def github_webhook(
+    repo_id: str,
+    request: Request,
+    x_hub_signature_256: str = Header(..., alias="X-Hub-Signature-256")
+):
+    """Handle GitHub webhook events."""
+    payload = await request.body()
+
+    # Verify signature
+    if not verify_github_signature(payload, x_hub_signature_256):
+        raise HTTPException(401, "Invalid signature")
+
+    event = request.headers.get("X-GitHub-Event")
+    data = await request.json()
+
+    # Normalize event
+    normalized_event = normalize_github_event(event, data)
+
+    # Queue for processing
+    await webhook_queue.enqueue(normalized_event)
+
+    return {"status": "queued"}
+
+
+@app.post("/webhooks/gitlab/{repo_id}")
+async def gitlab_webhook(
+    repo_id: str,
+    request: Request,
+    x_gitlab_token: str = Header(..., alias="X-Gitlab-Token")
+):
+    """Handle GitLab webhook events."""
+    payload = await request.body()
+
+    # Verify signature
+    if not verify_gitlab_signature(payload, x_gitlab_token):
+        raise HTTPException(401, "Invalid signature")
+
+    event = request.headers.get("X-Gitlab-Event")
+    data = await request.json()
+
+    # Normalize event
+    normalized_event = normalize_gitlab_event(event, data)
+
+    # Queue for processing
+    await webhook_queue.enqueue(normalized_event)
+
+    return {"status": "queued"}
 
 
 @app.get("/", response_class=HTMLResponse)
