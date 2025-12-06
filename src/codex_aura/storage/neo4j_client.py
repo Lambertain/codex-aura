@@ -6,11 +6,13 @@ Provides async interface to Neo4j graph database.
 import os
 from typing import Optional, Any, Dict, List
 from contextlib import asynccontextmanager
+from functools import lru_cache
 
 from neo4j import AsyncGraphDatabase, AsyncSession
 from neo4j.exceptions import ServiceUnavailable
 
 from ..models.graph import Graph
+from ..models.node import Node
 
 
 class Neo4jClient:
@@ -264,3 +266,125 @@ class Neo4jClient:
             for statement in statements:
                 if statement:
                     await session.run(statement)
+
+
+class GraphQueries:
+    """
+    Query layer for graph operations in Neo4j.
+
+    Provides methods to query dependencies, dependents, and shortest paths
+    with built-in caching for performance.
+    """
+
+    def __init__(self, client: Neo4jClient):
+        """
+        Initialize GraphQueries with a Neo4j client.
+
+        Args:
+            client: Neo4jClient instance for database operations
+        """
+        self.client = client
+        self._cache = {}
+
+    async def get_dependencies(self, fqn: str, depth: int = 2) -> List[Node]:
+        """
+        Get all dependencies up to N levels deep.
+
+        Args:
+            fqn: Fully qualified name of the starting node
+            depth: Maximum depth to traverse
+
+        Returns:
+            List of dependent Node objects ordered by distance
+        """
+        cache_key = f"deps_{fqn}_{depth}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        query = """
+        MATCH path = (start:Node {fqn: $fqn})-[:IMPORTS|CALLS|EXTENDS*1..$depth]->(dep:Node)
+        RETURN DISTINCT dep, length(path) as distance
+        ORDER BY distance
+        """
+        result = await self.client.execute_query(query, {"fqn": fqn, "depth": depth})
+
+        nodes = []
+        for record in result:
+            node_data = dict(record["dep"])
+            # Convert back to Node object
+            node = Node(**node_data)
+            nodes.append(node)
+
+        self._cache[cache_key] = nodes
+        return nodes
+
+    async def get_dependents(self, fqn: str, depth: int = 2) -> List[Node]:
+        """
+        Get all nodes that depend on this node.
+
+        Args:
+            fqn: Fully qualified name of the target node
+            depth: Maximum depth to traverse
+
+        Returns:
+            List of dependent Node objects ordered by distance
+        """
+        cache_key = f"dependents_{fqn}_{depth}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        query = """
+        MATCH path = (dependent:Node)-[:IMPORTS|CALLS|EXTENDS*1..$depth]->(target:Node {fqn: $fqn})
+        RETURN DISTINCT dependent, length(path) as distance
+        ORDER BY distance
+        """
+        result = await self.client.execute_query(query, {"fqn": fqn, "depth": depth})
+
+        nodes = []
+        for record in result:
+            node_data = dict(record["dependent"])
+            node = Node(**node_data)
+            nodes.append(node)
+
+        self._cache[cache_key] = nodes
+        return nodes
+
+    async def shortest_path(self, source: str, target: str) -> List[Node]:
+        """
+        Find shortest path between two nodes.
+
+        Args:
+            source: FQN of source node
+            target: FQN of target node
+
+        Returns:
+            List of Node objects representing the path
+        """
+        cache_key = f"path_{source}_{target}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        query = """
+        MATCH path = shortestPath(
+            (a:Node {fqn: $source})-[*]-(b:Node {fqn: $target})
+        )
+        RETURN path
+        """
+        result = await self.client.execute_query(query, {"source": source, "target": target})
+
+        if not result:
+            nodes = []
+        else:
+            path = result[0]["path"]
+            nodes = []
+            for node in path.nodes:
+                node_data = dict(node)
+                node_obj = Node(**node_data)
+                nodes.append(node_obj)
+
+        self._cache[cache_key] = nodes
+        return nodes
+
+    def clear_cache(self):
+        """Clear the query cache."""
+        self._cache.clear()
