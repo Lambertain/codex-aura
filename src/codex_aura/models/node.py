@@ -47,6 +47,12 @@ class Node(BaseModel):
         """Pydantic configuration to allow extension fields."""
         extra = "allow"  # Allow additional fields not defined in the model
 
+
+class RankedNode(Node):
+    """A node with a ranking score for budget allocation."""
+
+    score: float
+
     @field_validator("lines")
     @classmethod
     def validate_lines(cls, v: Optional[List[int]]) -> Optional[List[int]]:
