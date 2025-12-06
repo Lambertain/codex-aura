@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 from neo4j import AsyncGraphDatabase, AsyncSession
 from neo4j.exceptions import ServiceUnavailable
 
+from ..models.graph import Graph
+
 
 class Neo4jClient:
     """
@@ -178,3 +180,87 @@ class Neo4jClient:
             }
         )
         return result[0] if result else {}
+
+    async def migrate_graph_to_neo4j(self, sqlite_graph: Graph) -> str:
+        """
+        Migrate graph from SQLite to Neo4j.
+
+        Args:
+            sqlite_graph: The Graph object from SQLite storage
+
+        Returns:
+            Neo4j graph ID
+        """
+        # Generate graph ID
+        neo4j_graph_id = f"{sqlite_graph.repository.name}_{sqlite_graph.sha or 'latest'}"
+
+        batch_size = 1000
+
+        async with self.session() as session:
+            # Create nodes in batches
+            for i in range(0, len(sqlite_graph.nodes), batch_size):
+                batch_nodes = sqlite_graph.nodes[i:i + batch_size]
+
+                for node in batch_nodes:
+                    # Determine FQN and label
+                    if node.type == "file":
+                        fqn = node.path
+                        label = "File"
+                    else:
+                        fqn = node.id
+                        label = node.type.capitalize()  # Class or Function
+
+                    # Prepare properties
+                    properties = node.model_dump()
+                    properties["repo_id"] = sqlite_graph.repository.name
+
+                    await session.run("""
+                        MERGE (n:Node {fqn: $fqn})
+                        SET n += $properties
+                        SET n:$label
+                    """, fqn=fqn, properties=properties, label=label)
+
+            # Create edges in batches
+            for i in range(0, len(sqlite_graph.edges), batch_size):
+                batch_edges = sqlite_graph.edges[i:i + batch_size]
+
+                for edge in batch_edges:
+                    # Get FQN for source and target nodes
+                    source_node = next((n for n in sqlite_graph.nodes if n.id == edge.source), None)
+                    target_node = next((n for n in sqlite_graph.nodes if n.id == edge.target), None)
+
+                    if not source_node or not target_node:
+                        continue  # Skip invalid edges
+
+                    source_fqn = source_node.path if source_node.type == "file" else source_node.id
+                    target_fqn = target_node.path if target_node.type == "file" else target_node.id
+
+                    properties = edge.model_dump()
+
+                    await session.run("""
+                        MATCH (a:Node {fqn: $source})
+                        MATCH (b:Node {fqn: $target})
+                        MERGE (a)-[r:$type]->(b)
+                        SET r += $properties
+                    """, source=source_fqn, target=target_fqn,
+                        type=edge.type.value, properties=properties)
+
+        return neo4j_graph_id
+
+    async def apply_schema(self, schema_path: str) -> None:
+        """
+        Apply Cypher schema to Neo4j database.
+
+        Args:
+            schema_path: Path to the schema.cypher file
+        """
+        with open(schema_path, 'r') as f:
+            schema_content = f.read()
+
+        # Split schema into individual statements
+        statements = [stmt.strip() for stmt in schema_content.split(';') if stmt.strip()]
+
+        async with self.session() as session:
+            for statement in statements:
+                if statement:
+                    await session.run(statement)
