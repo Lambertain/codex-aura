@@ -8,12 +8,25 @@ import tiktoken
 
 @dataclass
 class CodeChunk:
+    id: str
     content: str
     type: str
     name: str
     file_path: str
     start_line: int
     end_line: int
+
+
+@dataclass
+class SearchResult:
+    chunk: CodeChunk
+    score: float
+
+
+@dataclass
+class RankedNode:
+    fqn: str
+    score: float
 
 
 class EmbeddingService:

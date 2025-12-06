@@ -20,7 +20,8 @@ dependencies = [
     "psutil>=5.9.0",
     "neo4j>=5.15.0",
     "openai>=1.0.0",
-    "tiktoken>=0.5.0"
+    "tiktoken>=0.5.0",
+    "qdrant-client>=1.7.0"
 ]
 
 [project.scripts]
@@ -50,6 +51,7 @@ psutil = "^5.9.0"
 neo4j = "^5.15.0"
 openai = "^1.0.0"
 tiktoken = "^0.5.0"
+qdrant-client = "^1.7.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
