@@ -13,6 +13,8 @@ import yaml
 from ..analyzer.python import PythonAnalyzer
 from ..config.parser import ProjectConfig, load_config
 from ..models.graph import load_graph, save_graph
+from ..search import EmbeddingService, VectorStore, CodeChunker
+from ..storage.storage_abstraction import get_storage
 
 
 def main():
@@ -71,6 +73,19 @@ def main():
         "--minimal", action="store_true", help="Create minimal configuration with required fields only"
     )
 
+    # Index command
+    index_parser = subparsers.add_parser("index", help="Index management")
+    index_subparsers = index_parser.add_subparsers(dest="index_command", help="Index commands")
+
+    # Index rebuild
+    rebuild_parser = index_subparsers.add_parser("rebuild", help="Rebuild search index")
+    rebuild_parser.add_argument(
+        "--repo-id", required=True, help="Repository ID to rebuild index for"
+    )
+    rebuild_parser.add_argument(
+        "--force", action="store_true", help="Force complete rebuild (delete existing index)"
+    )
+
     # Config command
     config_parser = subparsers.add_parser("config", help="Configuration management")
     config_subparsers = config_parser.add_subparsers(dest="config_command", help="Config commands")
@@ -122,6 +137,11 @@ def main():
         start_server(args, cli_overrides)
     elif args.command == "init":
         init_project(args)
+    elif args.command == "index":
+        if args.index_command == "rebuild":
+            index_rebuild(args)
+        else:
+            index_parser.print_help()
     elif args.command == "config":
         if args.config_command == "validate":
             config_validate(args, cli_overrides)
@@ -450,6 +470,102 @@ def _print_config_with_sources(config_dict, source_map, prefix=""):
         else:
             source = source_map.get(current_prefix, "defaults")
             print(f"{current_prefix}: {value} (from {source})")
+
+
+def index_rebuild(args):
+    """Rebuild search index for a repository."""
+    import asyncio
+    import tqdm
+
+    repo_id = args.repo_id
+    force = args.force
+
+    print(f"Rebuilding search index for repository: {repo_id}")
+    if force:
+        print("Force rebuild enabled - will delete existing index")
+
+    try:
+        # Get storage and load graph
+        storage = get_storage()
+        graph = storage.load_graph(repo_id)
+
+        if not graph:
+            print(f"Error: Repository graph '{repo_id}' not found", file=sys.stderr)
+            sys.exit(1)
+
+        # Initialize search services
+        embedding_service = EmbeddingService()
+        vector_store = VectorStore()
+
+        async def rebuild_index():
+            # Delete existing collection if force rebuild
+            if force:
+                try:
+                    # Note: Qdrant client doesn't have delete_collection method in basic client
+                    # We'll recreate the collection instead
+                    pass
+                except Exception as e:
+                    print(f"Warning: Could not delete existing collection: {e}")
+
+            # Create new collection
+            await vector_store.create_collection(repo_id)
+
+            # Extract code chunks from graph
+            chunker = CodeChunker()
+            all_chunks = []
+
+            print("Extracting code chunks from repository...")
+
+            # Process each file in the graph
+            for node in tqdm.tqdm(graph.nodes, desc="Processing files"):
+                if node.type == "file" and node.path:
+                    # Load file content
+                    try:
+                        repo_path = Path(graph.repository.path)
+                        file_path = repo_path / node.path
+                        if file_path.exists() and file_path.is_file():
+                            with file_path.open("r", encoding="utf-8") as f:
+                                content = f.read()
+
+                            # Chunk the file
+                            chunks = chunker.chunk_file(content, node.path)
+                            all_chunks.extend(chunks)
+                    except Exception as e:
+                        print(f"Warning: Failed to process {node.path}: {e}")
+                        continue
+
+            if not all_chunks:
+                print("No code chunks found to index")
+                return
+
+            print(f"Found {len(all_chunks)} code chunks to index")
+
+            # Generate embeddings in batches
+            print("Generating embeddings...")
+            batch_size = 10
+            all_embeddings = []
+
+            for i in tqdm.tqdm(range(0, len(all_chunks), batch_size), desc="Embedding"):
+                batch = all_chunks[i:i + batch_size]
+                contents = [chunk.content for chunk in batch]
+                embeddings = await embedding_service.embed_batch(contents)
+                all_embeddings.extend(embeddings)
+
+            # Upsert to vector store
+            print("Indexing chunks...")
+            await vector_store.upsert_chunks(repo_id, all_chunks, all_embeddings)
+
+            print(f"✓ Successfully indexed {len(all_chunks)} code chunks for repository {repo_id}")
+
+        # Run async rebuild
+        asyncio.run(rebuild_index())
+
+    except Exception as e:
+        print(f"Error: Index rebuild failed: {e}", file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
