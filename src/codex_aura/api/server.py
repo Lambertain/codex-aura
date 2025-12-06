@@ -26,6 +26,7 @@ from ..health import health_checker
 from ..tracing import configure_tracing, instrument_app, get_tracer
 from ..analytics import analytics
 from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
+from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset
 from collections import deque
 
 # Configure structured logging
@@ -299,6 +300,53 @@ class ContextResponse(BaseModel):
     context_nodes: list[ContextNode]
     total_nodes: int
     truncated: bool
+
+
+class TokenBudgetedContextRequest(BaseModel):
+    """Request model for token-budgeted context endpoint."""
+
+    repo_id: str
+    task: str
+    entry_points: list[str]
+    max_tokens: int
+    budget_strategy: str = "greedy"
+    model: str = "gpt-4-turbo"
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v: int) -> int:
+        """Validate max_tokens is positive."""
+        if v <= 0:
+            raise ValueError("max_tokens must be positive")
+        return v
+
+    @field_validator("budget_strategy")
+    @classmethod
+    def validate_budget_strategy(cls, v: str) -> str:
+        """Validate budget strategy."""
+        valid_strategies = ["greedy", "proportional", "knapsack"]
+        if v not in valid_strategies:
+            raise ValueError(f"budget_strategy must be one of: {valid_strategies}")
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "repo_id": "repo_abc123",
+                "task": "Fix JWT validation bug",
+                "entry_points": ["src/auth/jwt.py"],
+                "max_tokens": 8000,
+                "budget_strategy": "greedy",
+                "model": "gpt-4-turbo"
+            }
+        }
+
+
+class TokenBudgetedContextResponse(BaseModel):
+    """Response model for token-budgeted context endpoint."""
+
+    context: str
+    stats: dict
 
 
 class AffectedFile(BaseModel):
@@ -1518,6 +1566,147 @@ async def get_context(request: Request, body: ContextRequest):
             context_nodes=context_nodes,
             total_nodes=len(all_visited),
             truncated=truncated
+        )
+
+
+@app.post("/api/v1/token-context", response_model=TokenBudgetedContextResponse)
+@limiter.limit("30/minute")
+async def get_token_budgeted_context(request: Request, body: TokenBudgetedContextRequest):
+    """
+    Get token-budgeted context for a task.
+
+    Performs intelligent selection and summarization of code context
+    within specified token limits using various budget allocation strategies.
+
+    Returns concatenated context string and detailed statistics.
+    """
+    with tracer.start_as_current_span("get_token_budgeted_context") as span:
+        span.set_attribute("repo_id", body.repo_id)
+        span.set_attribute("task", body.task)
+        span.set_attribute("max_tokens", body.max_tokens)
+        span.set_attribute("budget_strategy", body.budget_strategy)
+        span.set_attribute("model", body.model)
+
+        # Validate budget parameters
+        try:
+            validate_budget_params(body.model, body.max_tokens)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Load graph by repo_id (assuming repo_id maps to graph_id)
+        # For now, we'll use repo_id as graph_id, but in practice this might need mapping
+        graph = storage.load_graph(body.repo_id)
+        if not graph:
+            raise HTTPException(status_code=404, detail=f"Repository '{body.repo_id}' not found")
+
+        # Validate entry points exist
+        for entry_point in body.entry_points:
+            if not any(n.id == entry_point for n in graph.nodes):
+                raise HTTPException(status_code=404, detail=f"Entry point '{entry_point}' not found")
+
+        # Create ranked nodes from entry points and their dependencies
+        # This is a simplified approach - in practice you might want more sophisticated ranking
+        all_relevant_nodes = set()
+        ranked_nodes = []
+
+        for entry_point in body.entry_points:
+            visited, _ = traverse_dependencies(graph, entry_point, 3, "outgoing")  # Get dependencies up to depth 3
+            all_relevant_nodes.update(visited)
+
+        # Convert to ranked nodes with basic scoring
+        for node_id in all_relevant_nodes:
+            node = next(n for n in graph.nodes if n.id == node_id)
+            # Simple scoring: entry points get highest score, then by distance
+            if node_id in body.entry_points:
+                score = 1.0
+            else:
+                # Calculate min distance from any entry point
+                min_distance = float('inf')
+                for ep in body.entry_points:
+                    dist = _calculate_distance(graph, ep, node_id, 5)
+                    if dist is not None:
+                        min_distance = min(min_distance, dist)
+                score = 1.0 / (1 + min_distance) if min_distance != float('inf') else 0.1
+
+            ranked_nodes.append(type('RankedNode', (), {
+                'id': node.id,
+                'type': node.type,
+                'name': node.name,
+                'path': node.path,
+                'score': score,
+                'content': getattr(node, 'content', ''),
+                'signature': getattr(node, 'signature', ''),
+                'docstring': getattr(node, 'docstring', '')
+            })())
+
+        # Allocate budget
+        allocator = BudgetAllocator()
+        analytics_tracker = BudgetAnalytics()
+
+        selected_nodes = allocator.allocate(
+            ranked_nodes,
+            body.max_tokens,
+            body.budget_strategy
+        )
+
+        # Analyze allocation
+        stats = analytics_tracker.analyze_allocation(
+            ranked_nodes,
+            selected_nodes,
+            body.max_tokens,
+            body.budget_strategy
+        )
+
+        # Build context string
+        context_parts = []
+        summarizer = None  # Could add summarization if needed
+
+        for node in selected_nodes:
+            # Format node content
+            node_content = getattr(node, 'content', '')
+            signature = getattr(node, 'signature', '')
+            docstring = getattr(node, 'docstring', '')
+
+            if signature and node_content:
+                context_parts.append(f"# {node.path}\n{signature}\n{node_content}")
+            elif docstring:
+                context_parts.append(f"# {node.path}\n{docstring}")
+            else:
+                context_parts.append(f"# {node.path}\n{node_content}")
+
+        context = "\n\n".join(context_parts)
+
+        # Prepare response stats
+        response_stats = {
+            "total_tokens": stats.total_tokens,
+            "budget_used_pct": stats.budget_used_pct,
+            "nodes_included": stats.nodes_included,
+            "nodes_truncated": stats.nodes_truncated,
+            "nodes_excluded": len(ranked_nodes) - stats.nodes_included
+        }
+
+        # Update metrics
+        CONTEXT_REQUESTS_TOTAL.inc()
+
+        span.set_attribute("context_tokens", stats.total_tokens)
+        span.set_attribute("nodes_selected", stats.nodes_included)
+
+        logger.info(
+            "token_budgeted_context_generated",
+            repo_id=body.repo_id,
+            task=body.task[:50],  # Truncate long tasks
+            max_tokens=body.max_tokens,
+            budget_strategy=body.budget_strategy,
+            model=body.model,
+            total_tokens=stats.total_tokens,
+            budget_used_pct=stats.budget_used_pct,
+            nodes_included=stats.nodes_included,
+            nodes_excluded=response_stats["nodes_excluded"]
+        )
+
+        return TokenBudgetedContextResponse(
+            context=context,
+            stats=response_stats
         )
 
 
