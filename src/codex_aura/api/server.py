@@ -25,6 +25,7 @@ from ..metrics import get_metrics_response, MetricsMiddleware, GRAPHS_TOTAL, GRA
 from ..health import health_checker
 from ..tracing import configure_tracing, instrument_app, get_tracer
 from ..analytics import analytics
+from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from collections import deque
 
 # Configure structured logging
@@ -322,6 +323,54 @@ class DeleteGraphResponse(BaseModel):
 
     deleted: bool
     graph_id: str
+
+
+class SearchRequest(BaseModel):
+    """Request model for search endpoint."""
+
+    repo_id: str
+    query: str
+    mode: str = Field(..., pattern="^(semantic|graph|hybrid)$")
+    limit: int = Field(20, ge=1, le=100)
+    filters: dict = Field(default_factory=dict)
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, v: dict) -> dict:
+        """Validate filters structure."""
+        if not isinstance(v, dict):
+            raise ValueError("filters must be a dictionary")
+
+        allowed_keys = {"file_types", "paths"}
+        for key in v.keys():
+            if key not in allowed_keys:
+                raise ValueError(f"Invalid filter key: {key}. Allowed: {allowed_keys}")
+
+        if "file_types" in v and not isinstance(v["file_types"], list):
+            raise ValueError("file_types must be a list")
+
+        if "paths" in v and not isinstance(v["paths"], list):
+            raise ValueError("paths must be a list")
+
+        return v
+
+
+class SearchResultItem(BaseModel):
+    """Search result item model."""
+
+    fqn: str
+    type: str
+    file_path: str
+    score: float
+    snippet: str | None = None
+
+
+class SearchResponse(BaseModel):
+    """Response model for search endpoint."""
+
+    results: list[SearchResultItem]
+    total: int
+    search_mode: str
 
 
 @app.get("/health")
@@ -1640,6 +1689,203 @@ async def delete_graph(graph_id: str):
         raise HTTPException(status_code=404, detail="Graph not found")
 
     return DeleteGraphResponse(deleted=True, graph_id=graph_id)
+
+
+@app.post("/api/v1/search", response_model=SearchResponse)
+@limiter.limit("30/minute")
+async def search_code(request: Request, body: SearchRequest):
+    """
+    Search for code using semantic, graph, or hybrid search.
+
+    Performs code search across indexed repositories using different search modes:
+    - semantic: Pure semantic similarity search
+    - graph: Graph-based structural search
+    - hybrid: Combined semantic and graph-based search
+
+    Supports filtering by file types and paths.
+    """
+    with tracer.start_as_current_span("search_code") as span:
+        span.set_attribute("repo_id", body.repo_id)
+        span.set_attribute("query", body.query)
+        span.set_attribute("mode", body.mode)
+        span.set_attribute("limit", body.limit)
+
+        try:
+            # Initialize search services
+            embedding_service = EmbeddingService()
+            vector_store = VectorStore()
+            semantic_search = SemanticSearch(embedding_service, vector_store)
+            hybrid_search = HybridSearch(semantic_search)
+
+            results = []
+
+            if body.mode == "semantic":
+                # Semantic search
+                search_results = await semantic_search.search(
+                    repo_id=body.repo_id,
+                    query=body.query,
+                    limit=body.limit * 2  # Get more for filtering
+                )
+
+                for result in search_results:
+                    chunk = result.chunk
+                    # Apply filters
+                    if _matches_filters(chunk, body.filters):
+                        snippet = _extract_snippet(chunk.content)
+                        fqn = f"{chunk.file_path}::{chunk.name}" if chunk.type != "file" else chunk.file_path
+
+                        results.append(SearchResultItem(
+                            fqn=fqn,
+                            type=chunk.type,
+                            file_path=chunk.file_path,
+                            score=result.score,
+                            snippet=snippet
+                        ))
+
+            elif body.mode == "graph":
+                # Graph-based search (simplified - search by name/path)
+                graph = storage.load_graph(body.repo_id)
+                if not graph:
+                    raise HTTPException(status_code=404, detail="Repository graph not found")
+
+                # Simple text-based search in graph nodes
+                query_lower = body.query.lower()
+                matching_nodes = []
+
+                for node in graph.nodes:
+                    if _matches_filters({"file_path": node.path, "type": node.type}, body.filters):
+                        # Search in node name, path, or content
+                        searchable_text = f"{node.name} {node.path}".lower()
+                        if query_lower in searchable_text:
+                            matching_nodes.append(node)
+
+                # Sort by relevance (simple scoring)
+                matching_nodes.sort(key=lambda n: len(n.name) if body.query.lower() in n.name.lower() else 0, reverse=True)
+
+                for node in matching_nodes[:body.limit]:
+                    fqn = node.path if node.type == "file" else node.id
+                    snippet = _extract_snippet_from_node(node)
+
+                    results.append(SearchResultItem(
+                        fqn=fqn,
+                        type=node.type,
+                        file_path=node.path,
+                        score=0.8,  # Fixed score for graph search
+                        snippet=snippet
+                    ))
+
+            elif body.mode == "hybrid":
+                # Hybrid search
+                ranked_nodes = await hybrid_search.search(
+                    repo_id=body.repo_id,
+                    task=body.query,
+                    entry_points=[],  # Empty for general search
+                    depth=2
+                )
+
+                for ranked_node in ranked_nodes[:body.limit]:
+                    # Parse fqn to get file_path and name
+                    if "::" in ranked_node.fqn:
+                        file_path, name = ranked_node.fqn.split("::", 1)
+                        node_type = "function"  # Assume function if has name
+                    else:
+                        file_path = ranked_node.fqn
+                        name = ""
+                        node_type = "file"
+
+                    # Apply filters
+                    if _matches_filters({"file_path": file_path, "type": node_type}, body.filters):
+                        results.append(SearchResultItem(
+                            fqn=ranked_node.fqn,
+                            type=node_type,
+                            file_path=file_path,
+                            score=ranked_node.score,
+                            snippet=None  # No snippet for hybrid search
+                        ))
+
+            # Limit results
+            results = results[:body.limit]
+
+            # Update metrics
+            CONTEXT_REQUESTS_TOTAL.inc()  # Reuse existing metric
+
+            span.set_attribute("results_count", len(results))
+
+            logger.info(
+                "search_completed",
+                repo_id=body.repo_id,
+                query=body.query,
+                mode=body.mode,
+                results_count=len(results)
+            )
+
+            return SearchResponse(
+                results=results,
+                total=len(results),
+                search_mode=body.mode
+            )
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+
+            logger.error(
+                "search_failed",
+                repo_id=body.repo_id,
+                query=body.query,
+                mode=body.mode,
+                error=str(e)
+            )
+            raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+def _matches_filters(chunk: dict, filters: dict) -> bool:
+    """Check if chunk matches the given filters."""
+    # File types filter
+    if "file_types" in filters:
+        file_types = filters["file_types"]
+        if file_types:
+            file_path = chunk.get("file_path", "")
+            file_ext = file_path.split(".")[-1] if "." in file_path else ""
+            if f".{file_ext}" not in file_types:
+                return False
+
+    # Paths filter
+    if "paths" in filters:
+        paths = filters["paths"]
+        if paths:
+            file_path = chunk.get("file_path", "")
+            if not any(path in file_path for path in paths):
+                return False
+
+    return True
+
+
+def _extract_snippet(content: str, max_length: int = 100) -> str:
+    """Extract a code snippet from content."""
+    if len(content) <= max_length:
+        return content
+
+    # Try to cut at a reasonable boundary
+    truncated = content[:max_length]
+    last_newline = truncated.rfind('\n')
+    if last_newline > max_length * 0.7:
+        return truncated[:last_newline]
+
+    return truncated + "..."
+
+
+def _extract_snippet_from_node(node) -> str | None:
+    """Extract snippet from a graph node."""
+    # Try to get code from node if available
+    if hasattr(node, 'code') and node.code:
+        return _extract_snippet(node.code)
+
+    # Fallback to docstring or name
+    if hasattr(node, 'docstring') and node.docstring:
+        return _extract_snippet(node.docstring)
+
+    return f"{node.type}: {node.name}"
 
 
 @app.get("/", response_class=HTMLResponse)
