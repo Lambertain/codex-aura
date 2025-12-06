@@ -20,6 +20,7 @@ class User(BaseModel):
     id: str
     username: str
     email: Optional[str] = None
+    plan: str = "free"  # free, pro, team, enterprise
 
 
 class BudgetAllocationRequest(BaseModel):

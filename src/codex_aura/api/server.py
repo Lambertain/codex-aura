@@ -1,6 +1,7 @@
 """FastAPI server for codex-aura."""
 
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -27,9 +28,10 @@ from ..health import health_checker
 from ..tracing import configure_tracing, instrument_app, get_tracer
 from ..analytics import analytics
 from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
-from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset
+from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset, TokenCounter
 from ..budgeting.analytics import BudgetAnalyticsService
-from ..api.budget import router as budget_router
+from ..api.budget import router as budget_router, get_current_user
+from ..api.middleware.rate_limit import get_rate_limit
 from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
@@ -1611,8 +1613,8 @@ async def get_dependencies(
 
 
 @app.post("/api/v1/context", response_model=ContextResponse)
-@limiter.limit("60/minute")
-async def get_context(request: Request, body: ContextRequest):
+@limiter.limit(lambda: get_rate_limit(get_current_user()))
+async def get_context(request: Request, body: ContextRequest, current_user=Depends(get_current_user)):
     """
     Get contextual nodes around entry points.
 
@@ -1680,6 +1682,9 @@ async def get_context(request: Request, body: ContextRequest):
 
     # Build context nodes
     context_nodes = []
+    total_tokens = 0
+    token_counter = TokenCounter()
+
     for node_id in sorted_nodes:
         node = next(n for n in graph.nodes if n.id == node_id)
         node_dict = node.model_dump()
@@ -1693,41 +1698,48 @@ async def get_context(request: Request, body: ContextRequest):
         )
         context_nodes.append(context_node)
 
-        # Update metrics
-        CONTEXT_REQUESTS_TOTAL.inc()
-        CONTEXT_NODES_RETURNED.labels(truncated=str(truncated).lower()).observe(len(context_nodes))
+        # Count tokens for this node
+        node_tokens = token_counter.count_node(node, "gpt-4")  # Use GPT-4 as default model
+        total_tokens += node_tokens
 
-        # Update span
-        span.set_attribute("context_nodes_returned", len(context_nodes))
-        span.set_attribute("total_nodes", len(all_visited))
-        span.set_attribute("truncated", truncated)
+    # Update metrics
+    CONTEXT_REQUESTS_TOTAL.inc()
+    CONTEXT_NODES_RETURNED.labels(truncated=str(truncated).lower()).observe(len(context_nodes))
 
-        # Track analytics
-        analytics.track_context_request(
-            graph_id=body.graph_id,
-            entry_points_count=len(body.entry_points),
-            depth=body.depth,
-            max_nodes=body.max_nodes,
-            nodes_returned=len(context_nodes),
-            truncated=truncated
-        )
+    # Update span with timing and token metrics
+    span.set_attribute("context_nodes_returned", len(context_nodes))
+    span.set_attribute("total_nodes", len(all_visited))
+    span.set_attribute("truncated", truncated)
+    span.set_attribute("total_tokens", total_tokens)
+    span.set_attribute("processing_time_ms", int((time.time() - time.time()) * 1000))  # Will be set by tracer
 
-        logger.info(
-            "context_retrieved",
-            graph_id=body.graph_id,
-            entry_points=body.entry_points,
-            depth=body.depth,
-            max_nodes=body.max_nodes,
-            context_nodes_returned=len(context_nodes),
-            total_nodes=len(all_visited),
-            truncated=truncated
-        )
+    # Track analytics
+    analytics.track_context_request(
+        graph_id=body.graph_id,
+        entry_points_count=len(body.entry_points),
+        depth=body.depth,
+        max_nodes=body.max_nodes,
+        nodes_returned=len(context_nodes),
+        truncated=truncated
+    )
 
-        return ContextResponse(
-            context_nodes=context_nodes,
-            total_nodes=len(all_visited),
-            truncated=truncated
-        )
+    logger.info(
+        "context_retrieved",
+        graph_id=body.graph_id,
+        entry_points=body.entry_points,
+        depth=body.depth,
+        max_nodes=body.max_nodes,
+        context_nodes_returned=len(context_nodes),
+        total_nodes=len(all_visited),
+        truncated=truncated,
+        total_tokens=total_tokens
+    )
+
+    return ContextResponse(
+        context_nodes=context_nodes,
+        total_nodes=len(all_visited),
+        truncated=truncated
+    )
 
 
 @app.post("/api/v1/token-context", response_model=TokenBudgetedContextResponse)
