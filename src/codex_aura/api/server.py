@@ -28,6 +28,8 @@ from ..tracing import configure_tracing, instrument_app, get_tracer
 from ..analytics import analytics
 from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset
+from ..budgeting.analytics import BudgetAnalyticsService
+from ..api.budget import router as budget_router
 from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
@@ -178,6 +180,9 @@ app.add_middleware(MetricsMiddleware)
 
 # Instrument app for tracing
 instrument_app(app)
+
+# Include API routers
+app.include_router(budget_router, prefix="/api/v1", tags=["budget"])
 
 # Mount static files
 import os
