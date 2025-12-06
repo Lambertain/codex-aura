@@ -57,3 +57,9 @@ class GitLabWebhookPayload(BaseModel):
     project: Optional[Dict[str, Any]] = None
     commits: Optional[list] = None
     total_commits_count: Optional[int] = None
+
+
+class SyncJob(BaseModel):
+    """Sync job model for queueing sync operations."""
+    repo_id: str
+    target_sha: Optional[str] = None

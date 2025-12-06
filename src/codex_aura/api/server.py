@@ -31,6 +31,7 @@ from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_par
 from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
+from ..sync.status import SyncStatusTracker, SyncJob, init_sync_status_table
 from collections import deque
 
 # Configure structured logging
@@ -92,6 +93,9 @@ app = FastAPI(
 # Initialize storage
 storage = SQLiteStorage()
 
+# Initialize sync status table
+init_sync_status_table(storage)
+
 
 class GraphUpdater:
     """Updates dependency graphs based on file changes."""
@@ -142,6 +146,9 @@ webhook_processor = WebhookProcessor(graph_updater=graph_updater)
 
 # Set global webhook processor for arq workers
 set_webhook_processor(webhook_processor)
+
+# Initialize sync status tracker
+sync_tracker = SyncStatusTracker(storage, webhook_queue.redis_pool)
 
 
 @asynccontextmanager
@@ -575,6 +582,34 @@ async def gitlab_webhook(
 
     # Queue for processing using Redis/arq
     await webhook_queue.enqueue(normalized_event)
+
+    return {"status": "queued"}
+
+
+# Sync status endpoints
+@app.get("/api/v1/repos/{repo_id}/sync/status")
+async def get_sync_status(repo_id: str):
+    """Get sync status for a repository."""
+    return await sync_tracker.get_status(repo_id)
+
+
+@app.post("/api/v1/repos/{repo_id}/sync/trigger")
+async def trigger_sync(
+    repo_id: str,
+    target_sha: str | None = None
+):
+    """Manually trigger sync for a repository."""
+    status = await sync_tracker.get_status(repo_id)
+
+    if status.state == "syncing":
+        raise HTTPException(409, "Sync already in progress")
+
+    # Start sync
+    await sync_tracker.start_sync(repo_id, target_sha)
+
+    # Queue sync job
+    job = SyncJob(repo_id=repo_id, target_sha=target_sha or "HEAD")
+    await webhook_queue.enqueue(job)
 
     return {"status": "queued"}
 
