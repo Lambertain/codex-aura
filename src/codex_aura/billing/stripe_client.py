@@ -1,7 +1,12 @@
 import stripe
 from pydantic import BaseModel
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+from ..config.settings import settings
+from ..models.user import User
+
+# Initialize Stripe
+if settings.stripe_secret_key:
+    stripe.api_key = settings.stripe_secret_key
 
 class StripeClient:
     """Stripe integration for billing."""

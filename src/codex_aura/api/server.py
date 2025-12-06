@@ -31,6 +31,7 @@ from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset, TokenCounter
 from ..budgeting.analytics import BudgetAnalyticsService
 from ..api.budget import router as budget_router, get_current_user
+from ..api.billing import router as billing_router
 from ..api.middleware.rate_limit import get_rate_limit
 from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
@@ -185,6 +186,7 @@ instrument_app(app)
 
 # Include API routers
 app.include_router(budget_router, prefix="/api/v1", tags=["budget"])
+app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
 
 # Mount static files
 import os

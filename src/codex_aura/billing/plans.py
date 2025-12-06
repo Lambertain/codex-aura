@@ -56,4 +56,5 @@ PLAN_LIMITS: dict[PlanTier, PlanLimits] = {
 STRIPE_PRICES = {
     PlanTier.PRO: "price_pro_monthly",
     PlanTier.TEAM: "price_team_monthly",
+    PlanTier.ENTERPRISE: "price_enterprise_monthly",
 }
