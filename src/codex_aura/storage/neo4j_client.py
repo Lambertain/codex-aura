@@ -13,6 +13,7 @@ from neo4j.exceptions import ServiceUnavailable
 
 from ..models.graph import Graph
 from ..models.node import Node
+from ..sync.incremental import GraphTransaction
 
 
 class Neo4jClient:
