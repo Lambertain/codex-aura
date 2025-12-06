@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 import asyncio
 from typing import List, Optional, Dict, Any
@@ -15,20 +14,7 @@ from ..storage.storage_abstraction import GraphStorage
 from ..analyzer.base import BaseAnalyzer
 from ..search.vector_store import VectorStore
 from ..search.embeddings import EmbeddingService, CodeChunker
-
-
-class ChangeType(str, Enum):
-    ADDED = "added"
-    MODIFIED = "modified"
-    DELETED = "deleted"
-    RENAMED = "renamed"
-
-
-@dataclass
-class FileChange:
-    path: str
-    change_type: ChangeType
-    old_path: str | None = None  # для renamed
+from . import ChangeType, FileChange
 
 
 @dataclass

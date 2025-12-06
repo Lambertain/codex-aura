@@ -43,6 +43,23 @@ class Node(BaseModel):
     docstring: Optional[str] = None
     blame: Optional[BlameInfo] = None
 
+    @property
+    def fqn(self) -> str:
+        """Fully qualified name for the node."""
+        if self.type == "file":
+            return self.path
+        return self.id
+
+    @property
+    def start_line(self) -> int:
+        """Start line of the node definition."""
+        return self.lines[0] if self.lines else 0
+
+    @property
+    def end_line(self) -> int:
+        """End line of the node definition."""
+        return self.lines[1] if self.lines else 0
+
     class Config:
         """Pydantic configuration to allow extension fields."""
         extra = "allow"  # Allow additional fields not defined in the model

@@ -1,11 +1,19 @@
 """Base classes for code analyzers."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
 from ..models.graph import Graph
 from ..models.node import Node
+from ..models.edge import EdgeType
+
+
+@dataclass
+class Reference:
+    target_fqn: str
+    edge_type: EdgeType
 
 
 class BaseAnalyzer(ABC):
