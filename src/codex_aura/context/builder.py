@@ -10,7 +10,7 @@ from ..token_budget.presets import get_preset
 from ..token_budget.summarizer import ContentSummarizer
 
 if TYPE_CHECKING:
-    from .formatter import ContextFormatter
+    from .formatters import ContextFormatter
     from ..api.models.context import ContextRequest, ContextResponse, ContextStats
 
 
@@ -289,7 +289,7 @@ class ContextBuilder:
     ) -> str:
         """Format nodes into context string."""
         # Import here to avoid circular imports
-        from .formatter import ContextFormatter
+        from .formatters import ContextFormatter
 
         formatter = ContextFormatter(
             include_metadata=include_metadata,
