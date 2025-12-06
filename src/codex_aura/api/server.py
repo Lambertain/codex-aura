@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +34,8 @@ from ..budgeting.analytics import BudgetAnalyticsService
 from ..api.budget import router as budget_router, get_current_user
 from ..api.billing import router as billing_router
 from ..api.middleware.rate_limit import get_rate_limit
+from ..api.middleware.quota import QuotaEnforcementMiddleware
+from ..billing.usage import UsageTracker
 from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
@@ -100,6 +103,12 @@ storage = SQLiteStorage()
 
 # Initialize sync status table
 init_sync_status_table(storage)
+
+# Initialize Redis for usage tracking
+redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+
+# Initialize usage tracker
+usage_tracker = UsageTracker(redis_client, storage)
 
 
 class GraphUpdater:
@@ -180,6 +189,7 @@ app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(MetricsMiddleware)
+app.add_middleware(QuotaEnforcementMiddleware, usage_tracker=usage_tracker)
 
 # Instrument app for tracing
 instrument_app(app)

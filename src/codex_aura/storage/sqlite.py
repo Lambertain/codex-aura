@@ -47,6 +47,25 @@ class SQLiteStorage:
                     graph_data TEXT NOT NULL
                 )
             """)
+
+            # Create usage_events table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS usage_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    tokens_used INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Create index on user_id and timestamp for efficient queries
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp
+                ON usage_events(user_id, timestamp)
+            """)
+
             conn.commit()
 
         self._run_migrations()
@@ -299,3 +318,31 @@ class SQLiteStorage:
     def _get_connection(self):
         """Get database connection (for testing)."""
         return sqlite3.connect(self.db_path)
+
+    async def insert_usage_event(
+        self,
+        user_id: str,
+        endpoint: str,
+        tokens_used: int,
+        timestamp: datetime
+    ) -> None:
+        """Insert usage event for billing tracking.
+
+        Args:
+            user_id: User identifier
+            endpoint: API endpoint called
+            tokens_used: Number of tokens consumed
+            timestamp: Event timestamp
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO usage_events
+                (user_id, endpoint, tokens_used, timestamp)
+                VALUES (?, ?, ?, ?)
+            """, (
+                user_id,
+                endpoint,
+                tokens_used,
+                timestamp.isoformat()
+            ))
+            conn.commit()
