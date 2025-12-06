@@ -88,6 +88,40 @@ class CodeChunker:
 
         return chunks
 
+    def chunk_node(self, node: "Node") -> list[CodeChunk]:
+        """Chunk a single node into code chunks."""
+        if node.type == "file":
+            # For file nodes, use the existing chunk_file method
+            return self.chunk_file(node.content, node.path)
+        else:
+            # For class/function nodes, create chunks based on their content
+            chunks = []
+            tree = ast.parse(node.content)
+
+            for ast_node in ast.walk(tree):
+                if isinstance(ast_node, ast.FunctionDef):
+                    chunks.append(CodeChunk(
+                        id=f"{node.fqn}::{ast_node.name}",
+                        content=ast.get_source_segment(node.content, ast_node),
+                        type="function",
+                        name=ast_node.name,
+                        file_path=node.path,
+                        start_line=ast_node.lineno,
+                        end_line=ast_node.end_lineno
+                    ))
+                elif isinstance(ast_node, ast.ClassDef):
+                    chunks.append(CodeChunk(
+                        id=f"{node.fqn}::{ast_node.name}",
+                        content=self._extract_class_summary(ast_node, node.content),
+                        type="class",
+                        name=ast_node.name,
+                        file_path=node.path,
+                        start_line=ast_node.lineno,
+                        end_line=ast_node.end_lineno
+                    ))
+
+            return chunks
+
     def _extract_class_summary(self, node: ast.ClassDef, file_content: str) -> str:
         """Extract class docstring and method signatures."""
         summary_parts = []

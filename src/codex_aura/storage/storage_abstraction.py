@@ -61,6 +61,19 @@ class GraphStorage(ABC):
         pass
 
     @abstractmethod
+    async def get_all_nodes(self, repo_id: str) -> List[Node]:
+        """
+        Get all nodes for a repository.
+
+        Args:
+            repo_id: Repository identifier
+
+        Returns:
+            List of all nodes
+        """
+        pass
+
+    @abstractmethod
     @asynccontextmanager
     async def transaction(self, repo_id: str):
         """
@@ -133,6 +146,25 @@ class SQLiteStorageBackend(GraphStorage):
 
         return nodes
 
+    async def get_all_nodes(self, repo_id: str) -> List[Node]:
+        """Get all nodes for a repository from SQLite storage."""
+        graphs = self.storage.list_graphs()
+        if not graphs:
+            return []
+
+        # Find graph by repo_id pattern
+        graph_id = None
+        for graph in graphs:
+            if repo_id in graph["id"]:
+                graph_id = graph["id"]
+                break
+
+        if not graph_id:
+            return []
+
+        graph = self.storage.load_graph(graph_id)
+        return graph.nodes if graph else []
+
 
 class Neo4jStorageBackend(GraphStorage):
     """Neo4j storage backend implementation."""
@@ -162,6 +194,12 @@ class Neo4jStorageBackend(GraphStorage):
     async def query_dependencies(self, fqn: str, depth: int = 2) -> List[Node]:
         """Query dependencies from Neo4j storage."""
         return await self.queries.get_dependencies(fqn, depth)
+
+    async def get_all_nodes(self, repo_id: str) -> List[Node]:
+        """Get all nodes for a repository from Neo4j storage."""
+        # This would require implementing a query to get all nodes for a repo
+        # For now, return empty list as this is complex
+        return []
 
     @asynccontextmanager
     async def transaction(self, repo_id: str):

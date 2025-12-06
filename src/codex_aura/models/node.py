@@ -39,6 +39,7 @@ class Node(BaseModel):
     type: Literal["file", "class", "function"]
     name: str
     path: str
+    content: Optional[str] = None
     lines: Optional[List[int]] = None
     docstring: Optional[str] = None
     blame: Optional[BlameInfo] = None

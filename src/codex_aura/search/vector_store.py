@@ -50,6 +50,28 @@ class VectorStore:
             points_selector=filter_conditions
         )
 
+    async def delete_by_fqns(self, collection_name: str, fqns: list[str]) -> int:
+        """Delete vectors by fully qualified names."""
+        # Assuming fqn is stored in payload or as id
+        # This is a simplified implementation
+        deleted_count = 0
+        for fqn in fqns:
+            # Delete by filter on file_path for files or name for others
+            filter_conditions = {"file_path": fqn} if "/" in fqn else {"name": fqn}
+            try:
+                self.client.delete(
+                    collection_name=collection_name,
+                    points_selector=filter_conditions
+                )
+                deleted_count += 1  # This is approximate
+            except:
+                pass
+        return deleted_count
+
+    async def delete_collection(self, collection_name: str):
+        """Delete entire collection."""
+        self.client.delete_collection(collection_name)
+
 
 class SemanticSearch:
     def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore):

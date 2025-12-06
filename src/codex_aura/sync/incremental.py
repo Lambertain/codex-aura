@@ -59,9 +59,28 @@ class GraphTransaction:
         # This is a placeholder - actual implementation would depend on storage backend
         return None
 
-    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type: EdgeType) -> None:
+    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type: EdgeType, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Create an edge between nodes."""
-        self.operations.append(("create_edge", source_fqn, target_fqn, edge_type))
+        self.operations.append(("create_edge", source_fqn, target_fqn, edge_type, metadata))
+
+    async def delete_edges_for_node(self, fqn: str) -> int:
+        """Delete all edges from/to a node."""
+        self.operations.append(("delete_edges_for_node", fqn))
+        return 0  # Placeholder
+
+    async def delete_outgoing_edges(self, fqn: str) -> int:
+        """Delete all outgoing edges from a node."""
+        self.operations.append(("delete_outgoing_edges", fqn))
+        return 0  # Placeholder
+
+    async def node_exists(self, fqn: str) -> bool:
+        """Check if node exists."""
+        self.operations.append(("node_exists", fqn))
+        return False  # Placeholder
+
+    async def create_external_ref(self, source_fqn: str, ref: "Reference") -> None:
+        """Create external reference."""
+        self.operations.append(("create_external_ref", source_fqn, ref))
 
     async def __aenter__(self):
         return self
@@ -120,13 +139,53 @@ class Neo4jGraphTransaction:
             return Node(**node_data)
         return None
 
-    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type: EdgeType) -> None:
+    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type: EdgeType, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Create an edge between nodes."""
         await self.session.run("""
             MATCH (a:Node {fqn: $source})
             MATCH (b:Node {fqn: $target})
             MERGE (a)-[r:$type]->(b)
         """, source=source_fqn, target=target_fqn, type=edge_type.value)
+
+    async def delete_edges_for_node(self, fqn: str) -> int:
+        """Delete all edges from/to a node."""
+        result = await self.session.run("""
+            MATCH (n:Node {fqn: $fqn})-[r]-()
+            DELETE r
+            RETURN count(r) as cnt
+        """, fqn=fqn)
+        record = await result.single()
+        return record["cnt"] if record else 0
+
+    async def delete_outgoing_edges(self, fqn: str) -> int:
+        """Delete all outgoing edges from a node."""
+        result = await self.session.run("""
+            MATCH (n:Node {fqn: $fqn})-[r]->()
+            DELETE r
+            RETURN count(r) as cnt
+        """, fqn=fqn)
+        record = await result.single()
+        return record["cnt"] if record else 0
+
+    async def node_exists(self, fqn: str) -> bool:
+        """Check if node exists."""
+        result = await self.session.run("""
+            MATCH (n:Node {fqn: $fqn})
+            RETURN count(n) > 0 as exists
+        """, fqn=fqn)
+        record = await result.single()
+        return record["exists"] if record else False
+
+    async def create_external_ref(self, source_fqn: str, ref: "Reference") -> None:
+        """Create external reference."""
+        # For now, just create a placeholder node
+        await self.session.run("""
+            MERGE (n:ExternalRef {fqn: $target})
+            SET n.type = 'external'
+            WITH n
+            MATCH (s:Node {fqn: $source})
+            MERGE (s)-[r:$type]->(n)
+        """, source=source_fqn, target=ref.target_fqn, type=ref.type.value)
 
 
 class IncrementalGraphUpdater:
