@@ -36,28 +36,68 @@
     },
     "EdgeType": {
       "enum": [
-        "IMPORTS"
+        "IMPORTS",
+        "CALLS",
+        "EXTENDS"
       ],
       "title": "EdgeType",
-      "type": "string"
+      "type": "string",
+      "description": "Types of relationships: IMPORTS (import statements), CALLS (function calls), EXTENDS (class inheritance). Custom types starting with CUSTOM_ are also allowed."
+    },
+    "BlameInfo": {
+      "properties": {
+        "primary_author": {
+          "title": "Primary Author",
+          "type": "string",
+          "description": "The main contributor to this file"
+        },
+        "contributors": {
+          "title": "Contributors",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of all contributors"
+        },
+        "author_distribution": {
+          "title": "Author Distribution",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Map of author names to line counts"
+        }
+      },
+      "required": [
+        "primary_author",
+        "contributors",
+        "author_distribution"
+      ],
+      "title": "BlameInfo",
+      "type": "object"
     },
     "Node": {
       "properties": {
         "id": {
           "title": "Id",
-          "type": "string"
+          "type": "string",
+          "description": "Unique identifier (path::type::name)"
         },
         "type": {
           "title": "Type",
-          "type": "string"
+          "type": "string",
+          "enum": ["file", "class", "function"],
+          "description": "Node type: file, class, or function"
         },
         "name": {
           "title": "Name",
-          "type": "string"
+          "type": "string",
+          "description": "Name of the entity"
         },
         "path": {
           "title": "Path",
-          "type": "string"
+          "type": "string",
+          "description": "Relative path to the file"
         },
         "lines": {
           "anyOf": [
@@ -65,14 +105,17 @@
               "items": {
                 "type": "integer"
               },
-              "type": "array"
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Lines"
+          "title": "Lines",
+          "description": "Line range [start, end]"
         },
         "docstring": {
           "anyOf": [
@@ -84,7 +127,21 @@
             }
           ],
           "default": null,
-          "title": "Docstring"
+          "title": "Docstring",
+          "description": "Documentation string"
+        },
+        "blame": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlameInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blame",
+          "description": "Git blame information"
         }
       },
       "required": [
@@ -94,7 +151,8 @@
         "path"
       ],
       "title": "Node",
-      "type": "object"
+      "type": "object",
+      "additionalProperties": true
     },
     "Repository": {
       "properties": {
@@ -180,6 +238,12 @@
       },
       "title": "Edges",
       "type": "array"
+    },
+    "sha": {
+      "title": "SHA",
+      "type": "string",
+      "default": "",
+      "description": "Git commit SHA of the analyzed repository state"
     }
   },
   "required": [

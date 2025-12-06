@@ -190,7 +190,7 @@ class TestContextFormatting:
     def test_xml_escaping(self, sample_context_nodes):
         """Test that XML format properly escapes special characters."""
         # Create a node with XML-sensitive characters
-        nodes_with_xml = sample_context_nodes + [
+        nodes_with_xml = [
             ContextNode(
                 id="func_xml_test",
                 type="function",
@@ -202,13 +202,19 @@ class TestContextFormatting:
 
         context = Context(
             context_nodes=nodes_with_xml,
-            total_nodes=4,
+            total_nodes=1,
             truncated=False,
             edges=None
         )
 
         result = context.to_prompt(format="xml")
-        assert "<" in result
-        assert ">" in result
-        assert "&" in result
-        assert "<" not in result.replace("<context>", "").replace("<context_nodes>", "").replace('<node id="', "").replace('<code>', "")  # Allow expected XML tags
+
+        # Check that XML entities are properly escaped
+        assert "&lt;" in result  # < escaped
+        assert "&gt;" in result  # > escaped
+        assert "&amp;" in result  # & escaped
+        assert "&apos;" in result  # ' escaped
+
+        # Verify the result is valid XML structure
+        assert "<context>" in result
+        assert "</context>" in result

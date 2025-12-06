@@ -25,6 +25,8 @@ def simple_project_repo():
 
 def test_cli_analyze_api_query_integration(flask_mini_repo, tmp_path):
     """Test CLI analyze → API query → correct result."""
+    import json as json_module
+
     # Start API server in background
     server_process = None
     try:
@@ -51,7 +53,7 @@ def test_cli_analyze_api_query_integration(flask_mini_repo, tmp_path):
         except requests.exceptions.RequestException:
             pytest.fail("API server failed to start")
 
-        # Run CLI analyze
+        # Run CLI analyze - outputs JSON by default
         result = subprocess.run(
             ["python", "-m", "src.codex_aura.cli.main", "analyze", str(flask_mini_repo)],
             capture_output=True,
@@ -61,26 +63,16 @@ def test_cli_analyze_api_query_integration(flask_mini_repo, tmp_path):
 
         assert result.returncode == 0
         output = result.stdout
-        assert "Graph ID:" in output
 
-        # Extract graph ID from output
-        lines = output.split('\n')
-        graph_id_line = next((line for line in lines if "Graph ID:" in line), None)
-        assert graph_id_line is not None
-        graph_id = graph_id_line.split("Graph ID:")[1].strip()
-
-        # Query API for the graph
-        response = requests.get(f"http://127.0.0.1:8001/api/v1/graph/{graph_id}")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["id"] == graph_id
-        assert "nodes" in data
-        assert "edges" in data
-        assert len(data["nodes"]) > 0
+        # CLI outputs JSON directly
+        graph_data = json_module.loads(output)
+        assert "version" in graph_data
+        assert "nodes" in graph_data
+        assert "edges" in graph_data
+        assert len(graph_data["nodes"]) > 0
 
         # Verify graph contains Flask-related nodes
-        node_names = [node["name"] for node in data["nodes"]]
+        node_names = [node["name"] for node in graph_data["nodes"]]
         assert "app.py" in node_names
 
     finally:
@@ -98,11 +90,13 @@ def test_cli_analyze_api_query_integration(flask_mini_repo, tmp_path):
 
 def test_full_flow_flask_repository(flask_mini_repo, tmp_path):
     """Test full flow on real Flask repository."""
+    import json as json_module
+
     db_path = tmp_path / "test_flask.db"
     env = os.environ.copy()
     env["CODEX_AURA_DB_PATH"] = str(db_path)
 
-    # Run analysis
+    # Run analysis - CLI outputs JSON by default
     result = subprocess.run(
         ["python", "-m", "src.codex_aura.cli.main", "analyze", str(flask_mini_repo)],
         capture_output=True,
@@ -111,28 +105,19 @@ def test_full_flow_flask_repository(flask_mini_repo, tmp_path):
     )
 
     assert result.returncode == 0
-    assert "Analysis completed" in result.stdout
-    assert "Graph ID:" in result.stdout
 
-    # Extract graph ID
-    lines = result.stdout.split('\n')
-    graph_id_line = next((line for line in lines if "Graph ID:" in line), None)
-    assert graph_id_line is not None
-    graph_id = graph_id_line.split("Graph ID:")[1].strip()
-
-    # Verify graph was saved and can be loaded
-    from src.codex_aura.storage.sqlite import SQLiteStorage
-    storage = SQLiteStorage(db_path=str(db_path))
-    graph = storage.load_graph(graph_id)
-    assert graph is not None
+    # Parse JSON output
+    graph_data = json_module.loads(result.stdout)
+    assert "version" in graph_data
+    assert "repository" in graph_data
+    assert "nodes" in graph_data
 
     # Verify Flask-specific content
-    assert graph.repository.name == "flask_mini"
-    assert len(graph.nodes) > 0
-    assert len(graph.edges) > 0
+    assert graph_data["repository"]["name"] == "flask_mini"
+    assert len(graph_data["nodes"]) > 0
 
-    # Should contain Flask imports and app structure
-    node_ids = [node.id for node in graph.nodes]
+    # Should contain Flask app structure
+    node_ids = [node["id"] for node in graph_data["nodes"]]
     assert any("app.py" in node_id for node_id in node_ids)
 
 
@@ -208,6 +193,8 @@ def test_cli_error_handling():
 
 def test_large_repository_performance(simple_project_repo, tmp_path):
     """Test performance with larger repository."""
+    import json as json_module
+
     db_path = tmp_path / "test_perf.db"
     env = os.environ.copy()
     env["CODEX_AURA_DB_PATH"] = str(db_path)
@@ -230,6 +217,8 @@ def test_large_repository_performance(simple_project_repo, tmp_path):
     assert result.returncode == 0
     assert duration < 30  # Should complete in less than 30 seconds
 
-    # Verify results
-    assert "Analysis completed" in result.stdout
-    assert "Graph ID:" in result.stdout
+    # Verify results - CLI outputs JSON by default
+    graph_data = json_module.loads(result.stdout)
+    assert "version" in graph_data
+    assert "nodes" in graph_data
+    assert len(graph_data["nodes"]) > 0

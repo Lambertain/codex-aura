@@ -7,10 +7,10 @@ from httpx import ASGITransport
 from unittest.mock import patch, MagicMock
 from datetime import datetime
 
-from src.codex_aura.api.server import app
-from src.codex_aura.models.graph import Graph, Repository, Stats
-from src.codex_aura.models.node import Node
-from src.codex_aura.models.edge import Edge, EdgeType
+from codex_aura.api.server import app
+from codex_aura.models.graph import Graph, Repository, Stats
+from codex_aura.models.node import Node
+from codex_aura.models.edge import Edge, EdgeType
 
 
 @pytest_asyncio.fixture
@@ -51,7 +51,7 @@ def sample_graph():
 @pytest.fixture
 def sample_graph_id(sample_graph):
     """Save sample graph and return its ID."""
-    from src.codex_aura.api.server import storage
+    from codex_aura.api.server import storage
     graph_id = "test_graph_123"
     storage.save_graph(sample_graph, graph_id)
     return graph_id
@@ -61,7 +61,7 @@ def sample_graph_id(sample_graph):
 async def test_analyze_endpoint(client, tmp_path):
     """Test the analyze endpoint."""
     # Mock the analyzer to avoid actual analysis
-    with patch('src.codex_aura.api.server.PythonAnalyzer') as mock_analyzer_class:
+    with patch('codex_aura.api.server.PythonAnalyzer') as mock_analyzer_class:
         mock_analyzer = MagicMock()
         mock_analyzer_class.return_value = mock_analyzer
 
@@ -93,19 +93,24 @@ async def test_analyze_endpoint(client, tmp_path):
         assert data["stats"]["files"] == 1
 
 
-def test_analyze_endpoint_invalid_path(client):
+@pytest.mark.asyncio
+async def test_analyze_endpoint_invalid_path(client):
     """Test analyze endpoint with invalid path."""
-    response = client.post("/api/v1/analyze", json={
+    response = await client.post("/api/v1/analyze", json={
         "repo_path": "/nonexistent/path"
     })
 
-    assert response.status_code == 400
-    assert "does not exist" in response.json()["detail"]
+    # Pydantic validation returns 422 for invalid paths
+    assert response.status_code == 422
+    # Check that error message mentions path doesn't exist
+    error_detail = response.json()["detail"]
+    assert any("does not exist" in str(err) or "not exist" in str(err) for err in error_detail)
 
 
-def test_context_endpoint(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_context_endpoint(client, sample_graph_id):
     """Test the context endpoint."""
-    response = client.post("/api/v1/context", json={
+    response = await client.post("/api/v1/context", json={
         "graph_id": sample_graph_id,
         "entry_points": ["main.py"],
         "depth": 2,
@@ -127,9 +132,10 @@ def test_context_endpoint(client, sample_graph_id):
     assert "relevance" in node
 
 
-def test_context_endpoint_invalid_graph(client):
+@pytest.mark.asyncio
+async def test_context_endpoint_invalid_graph(client):
     """Test context endpoint with invalid graph ID."""
-    response = client.post("/api/v1/context", json={
+    response = await client.post("/api/v1/context", json={
         "graph_id": "nonexistent",
         "entry_points": ["main.py"]
     })
@@ -138,9 +144,10 @@ def test_context_endpoint_invalid_graph(client):
     assert "not found" in response.json()["detail"]
 
 
-def test_context_endpoint_invalid_entry_point(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_context_endpoint_invalid_entry_point(client, sample_graph_id):
     """Test context endpoint with invalid entry point."""
-    response = client.post("/api/v1/context", json={
+    response = await client.post("/api/v1/context", json={
         "graph_id": sample_graph_id,
         "entry_points": ["nonexistent.py"]
     })
@@ -149,9 +156,10 @@ def test_context_endpoint_invalid_entry_point(client, sample_graph_id):
     assert "not found" in response.json()["detail"]
 
 
-def test_get_graphs_endpoint(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_graphs_endpoint(client, sample_graph_id):
     """Test the get graphs endpoint."""
-    response = client.get("/api/v1/graphs")
+    response = await client.get("/api/v1/graphs")
 
     assert response.status_code == 200
     data = response.json()
@@ -168,9 +176,10 @@ def test_get_graphs_endpoint(client, sample_graph_id):
     assert "edge_count" in graph_info
 
 
-def test_get_graph_endpoint(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_graph_endpoint(client, sample_graph_id):
     """Test the get graph endpoint."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}")
 
     assert response.status_code == 200
     data = response.json()
@@ -182,17 +191,19 @@ def test_get_graph_endpoint(client, sample_graph_id):
     assert len(data["edges"]) == 2
 
 
-def test_get_graph_endpoint_invalid_id(client):
+@pytest.mark.asyncio
+async def test_get_graph_endpoint_invalid_id(client):
     """Test get graph endpoint with invalid ID."""
-    response = client.get("/api/v1/graph/nonexistent")
+    response = await client.get("/api/v1/graph/nonexistent")
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
 
 
-def test_get_graph_endpoint_with_filters(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_graph_endpoint_with_filters(client, sample_graph_id):
     """Test get graph endpoint with node and edge type filters."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}?node_types=file,function")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}?node_types=file,function")
 
     assert response.status_code == 200
     data = response.json()
@@ -201,9 +212,10 @@ def test_get_graph_endpoint_with_filters(client, sample_graph_id):
     assert node_types == {"file", "function"}
 
 
-def test_get_node_endpoint(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_node_endpoint(client, sample_graph_id):
     """Test the get node endpoint."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}/node/main.py")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}/node/main.py")
 
     assert response.status_code == 200
     data = response.json()
@@ -217,17 +229,19 @@ def test_get_node_endpoint(client, sample_graph_id):
     assert "outgoing" in data["edges"]
 
 
-def test_get_node_endpoint_invalid_node(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_node_endpoint_invalid_node(client, sample_graph_id):
     """Test get node endpoint with invalid node ID."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}/node/nonexistent")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}/node/nonexistent")
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
 
 
-def test_get_dependencies_endpoint(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_dependencies_endpoint(client, sample_graph_id):
     """Test the get dependencies endpoint."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}/dependencies?node_id=main.py&depth=2&direction=outgoing")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}/dependencies?node_id=main.py&depth=2&direction=outgoing")
 
     assert response.status_code == 200
     data = response.json()
@@ -239,41 +253,52 @@ def test_get_dependencies_endpoint(client, sample_graph_id):
     assert len(data["edges"]) >= 1
 
 
-def test_get_dependencies_endpoint_invalid_depth(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_dependencies_endpoint_invalid_depth(client, sample_graph_id):
     """Test get dependencies endpoint with invalid depth."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}/dependencies?node_id=main.py&depth=10")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}/dependencies?node_id=main.py&depth=10")
 
     assert response.status_code == 400
     assert "must be between 1 and 5" in response.json()["detail"]
 
 
-def test_get_dependencies_endpoint_invalid_direction(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_get_dependencies_endpoint_invalid_direction(client, sample_graph_id):
     """Test get dependencies endpoint with invalid direction."""
-    response = client.get(f"/api/v1/graph/{sample_graph_id}/dependencies?node_id=main.py&direction=invalid")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}/dependencies?node_id=main.py&direction=invalid")
 
     assert response.status_code == 400
     assert "must be 'incoming', 'outgoing', or 'both'" in response.json()["detail"]
 
 
-def test_health_endpoint(client):
+@pytest.mark.asyncio
+async def test_health_endpoint(client):
     """Test the health endpoint."""
-    response = client.get("/health")
+    response = await client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "version" in data
+    assert "uptime_seconds" in data
 
 
-def test_ready_endpoint(client):
+@pytest.mark.asyncio
+async def test_ready_endpoint(client):
     """Test the ready endpoint."""
-    response = client.get("/ready")
+    response = await client.get("/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready"}
+    data = response.json()
+    assert data["status"] == "ready"
+    assert "version" in data
+    assert "checks" in data
 
 
-def test_info_endpoint(client):
+@pytest.mark.asyncio
+async def test_info_endpoint(client):
     """Test the info endpoint."""
-    response = client.get("/api/v1/info")
+    response = await client.get("/api/v1/info")
 
     assert response.status_code == 200
     data = response.json()
@@ -284,9 +309,10 @@ def test_info_endpoint(client):
     assert data["storage_backend"] == "sqlite"
 
 
-def test_delete_graph_endpoint(client, sample_graph_id):
+@pytest.mark.asyncio
+async def test_delete_graph_endpoint(client, sample_graph_id):
     """Test the delete graph endpoint."""
-    response = client.delete(f"/api/v1/graph/{sample_graph_id}")
+    response = await client.delete(f"/api/v1/graph/{sample_graph_id}")
 
     assert response.status_code == 200
     data = response.json()
@@ -294,13 +320,14 @@ def test_delete_graph_endpoint(client, sample_graph_id):
     assert data["graph_id"] == sample_graph_id
 
     # Verify graph is gone
-    response = client.get(f"/api/v1/graph/{sample_graph_id}")
+    response = await client.get(f"/api/v1/graph/{sample_graph_id}")
     assert response.status_code == 404
 
 
-def test_delete_graph_endpoint_invalid_id(client):
+@pytest.mark.asyncio
+async def test_delete_graph_endpoint_invalid_id(client):
     """Test delete graph endpoint with invalid ID."""
-    response = client.delete("/api/v1/graph/nonexistent")
+    response = await client.delete("/api/v1/graph/nonexistent")
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]

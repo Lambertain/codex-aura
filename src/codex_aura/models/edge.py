@@ -17,8 +17,13 @@ class EdgeType(str, Enum):
     def _missing_(cls, value):
         """Allow custom edge types that start with CUSTOM_."""
         if isinstance(value, str) and value.startswith("CUSTOM_"):
-            # Create a new enum member dynamically
-            return cls(value)
+            # Create a new pseudo-member for custom types
+            # Instead of calling cls(value) which causes recursion,
+            # we create an object that behaves like an enum member
+            obj = str.__new__(cls, value)
+            obj._value_ = value
+            obj._name_ = value
+            return obj
         return None
 
 

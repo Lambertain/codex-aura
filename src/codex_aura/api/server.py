@@ -38,6 +38,36 @@ jaeger_port = int(os.getenv("JAEGER_PORT", "14268"))
 configure_tracing(service_name="codex-aura", jaeger_host=jaeger_host, jaeger_port=jaeger_port)
 tracer = get_tracer(__name__)
 
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware to add security headers to all responses."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Middleware to limit request size."""
+
+    def __init__(self, app, max_size: int = 10 * 1024 * 1024):  # 10MB
+        super().__init__(app)
+        self.max_size = max_size
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > self.max_size:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "Request too large"}
+            )
+        return await call_next(request)
+
+
 app = FastAPI(
     title="Codex Aura API",
     description="REST API for code analysis and dependency graph generation",
@@ -90,35 +120,6 @@ ALLOWED_ROOTS = [
     Path("/tmp"),
     # Add more as needed
 ]
-
-
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Middleware to add security headers to all responses."""
-
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        return response
-
-
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Middleware to limit request size."""
-
-    def __init__(self, app, max_size: int = 10 * 1024 * 1024):  # 10MB
-        super().__init__(app)
-        self.max_size = max_size
-
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self.max_size:
-            return JSONResponse(
-                status_code=413,
-                content={"error": "Request too large"}
-            )
-        return await call_next(request)
 
 
 def validate_repo_path(path: str) -> Path:
@@ -1019,7 +1020,7 @@ async def root():
 
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 @limiter.limit("10/minute")
-async def analyze(request: AnalyzeRequest):
+async def analyze(request: Request, body: AnalyzeRequest):
     """
     Analyze a repository and generate a dependency graph.
 
@@ -1041,11 +1042,11 @@ async def analyze(request: AnalyzeRequest):
     start_time = time.time()
 
     with tracer.start_as_current_span("analyze_repository") as span:
-        span.set_attribute("repo_path", str(request.repo_path))
-        span.set_attribute("edge_types", str(request.edge_types))
+        span.set_attribute("repo_path", str(body.repo_path))
+        span.set_attribute("edge_types", str(body.edge_types))
 
         # Repo path is already validated by Pydantic model
-        repo_path = Path(request.repo_path)
+        repo_path = Path(body.repo_path)
 
         try:
             # Analyze repository
@@ -1353,7 +1354,7 @@ async def get_dependencies(
 
 @app.post("/api/v1/context", response_model=ContextResponse)
 @limiter.limit("60/minute")
-async def get_context(request: ContextRequest):
+async def get_context(request: Request, body: ContextRequest):
     """
     Get contextual nodes around entry points.
 
@@ -1364,27 +1365,27 @@ async def get_context(request: ContextRequest):
     or classes, with relevance scoring based on distance from entry points.
     """
     with tracer.start_as_current_span("get_context") as span:
-        span.set_attribute("graph_id", request.graph_id)
-        span.set_attribute("entry_points", str(request.entry_points))
-        span.set_attribute("depth", request.depth)
-        span.set_attribute("max_nodes", request.max_nodes)
-        span.set_attribute("include_code", request.include_code)
+        span.set_attribute("graph_id", body.graph_id)
+        span.set_attribute("entry_points", str(body.entry_points))
+        span.set_attribute("depth", body.depth)
+        span.set_attribute("max_nodes", body.max_nodes)
+        span.set_attribute("include_code", body.include_code)
 
         # Validate depth
-        if request.depth < 1 or request.depth > 5:
+        if body.depth < 1 or body.depth > 5:
             raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")
 
         # Validate max_nodes
-        if request.max_nodes < 1 or request.max_nodes > 100:
+        if body.max_nodes < 1 or body.max_nodes > 100:
             raise HTTPException(status_code=400, detail="max_nodes must be between 1 and 100")
 
         # Load graph
-        graph = storage.load_graph(request.graph_id)
+        graph = storage.load_graph(body.graph_id)
         if not graph:
             raise HTTPException(status_code=404, detail="Graph not found")
 
     # Validate entry points exist
-    for entry_point in request.entry_points:
+    for entry_point in body.entry_points:
         if not any(n.id == entry_point for n in graph.nodes):
             raise HTTPException(status_code=404, detail=f"Entry point '{entry_point}' not found")
 
@@ -1392,18 +1393,18 @@ async def get_context(request: ContextRequest):
     all_visited = set()
     node_distances = {}  # node_id -> min_distance
 
-    for entry_point in request.entry_points:
-        visited, _ = traverse_dependencies(graph, entry_point, request.depth, "outgoing")
+    for entry_point in body.entry_points:
+        visited, _ = traverse_dependencies(graph, entry_point, body.depth, "outgoing")
         for node_id in visited:
             if node_id not in all_visited:
                 # Calculate distance from nearest entry point
                 min_distance = float('inf')
-                for ep in request.entry_points:
+                for ep in body.entry_points:
                     if ep == node_id:
                         min_distance = 0
                         break
                     # BFS to find distance
-                    dist = _calculate_distance(graph, ep, node_id, request.depth)
+                    dist = _calculate_distance(graph, ep, node_id, body.depth)
                     if dist is not None:
                         min_distance = min(min_distance, dist)
 
@@ -1415,9 +1416,9 @@ async def get_context(request: ContextRequest):
     sorted_nodes = sorted(all_visited, key=lambda n: node_distances.get(n, float('inf')))
 
     # Apply max_nodes limit
-    truncated = len(sorted_nodes) > request.max_nodes
+    truncated = len(sorted_nodes) > body.max_nodes
     if truncated:
-        sorted_nodes = sorted_nodes[:request.max_nodes]
+        sorted_nodes = sorted_nodes[:body.max_nodes]
 
     # Build context nodes
     context_nodes = []
@@ -1429,7 +1430,7 @@ async def get_context(request: ContextRequest):
             id=node.id,
             type=node.type,
             path=node.path,
-            code=node_dict.get("code") if request.include_code else None,
+            code=node_dict.get("code") if body.include_code else None,
             relevance=1.0 / (1 + node_distances.get(node_id, 0))  # Higher relevance for closer nodes
         )
         context_nodes.append(context_node)
@@ -1445,20 +1446,20 @@ async def get_context(request: ContextRequest):
 
         # Track analytics
         analytics.track_context_request(
-            graph_id=request.graph_id,
-            entry_points_count=len(request.entry_points),
-            depth=request.depth,
-            max_nodes=request.max_nodes,
+            graph_id=body.graph_id,
+            entry_points_count=len(body.entry_points),
+            depth=body.depth,
+            max_nodes=body.max_nodes,
             nodes_returned=len(context_nodes),
             truncated=truncated
         )
 
         logger.info(
             "context_retrieved",
-            graph_id=request.graph_id,
-            entry_points=request.entry_points,
-            depth=request.depth,
-            max_nodes=request.max_nodes,
+            graph_id=body.graph_id,
+            entry_points=body.entry_points,
+            depth=body.depth,
+            max_nodes=body.max_nodes,
             context_nodes_returned=len(context_nodes),
             total_nodes=len(all_visited),
             truncated=truncated

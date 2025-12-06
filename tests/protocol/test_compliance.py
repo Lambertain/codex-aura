@@ -3,17 +3,50 @@
 import json
 import pytest
 from pathlib import Path
-from jsonschema import validate, ValidationError
+from jsonschema import validate, ValidationError, RefResolver
 
 from codex_aura.models.node import Node, BlameInfo
 from codex_aura.models.edge import Edge, EdgeType
 
 
+# Schema directory for local resolution
+SCHEMAS_DIR = Path(__file__).parent.parent.parent / "schemas"
+
+
 def load_schema(schema_name: str) -> dict:
     """Load a JSON schema from the schemas directory."""
-    schema_path = Path(__file__).parent.parent.parent / "schemas" / schema_name
+    schema_path = SCHEMAS_DIR / schema_name
     with open(schema_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def create_local_resolver(schema: dict) -> RefResolver:
+    """Create a resolver that loads $ref schemas from local filesystem.
+
+    This allows schemas with $ref like "node.schema.json" to be resolved
+    locally instead of trying to fetch from the $id URL.
+    """
+    # Build a store with all schemas
+    store = {}
+    for schema_file in SCHEMAS_DIR.glob("*.schema.json"):
+        with open(schema_file, "r", encoding="utf-8") as f:
+            s = json.load(f)
+            # Add to store with both the $id and the filename as keys
+            if "$id" in s:
+                store[s["$id"]] = s
+            # Also add by relative filename for relative $ref resolution
+            store[schema_file.name] = s
+
+    # Create resolver with local file URI base
+    base_uri = f"file:///{SCHEMAS_DIR.as_posix()}/"
+    resolver = RefResolver(base_uri, schema, store=store)
+    return resolver
+
+
+def validate_with_local_refs(instance: dict, schema: dict) -> None:
+    """Validate instance against schema, resolving $refs locally."""
+    resolver = create_local_resolver(schema)
+    validate(instance, schema, resolver=resolver)
 
 
 def create_sample_node() -> Node:
@@ -131,12 +164,12 @@ def test_graph_schema_compliance():
 
     schema = load_schema("graph.schema.json")
 
-    # Convert graph to dict format
-    graph_dict = graph.model_dump()
+    # Convert graph to dict format (mode="json" for JSON-serializable output)
+    graph_dict = graph.model_dump(mode="json")
 
-    # Validate against schema
+    # Validate against schema (using local resolver for $ref)
     try:
-        validate(graph_dict, schema)
+        validate_with_local_refs(graph_dict, schema)
     except ValidationError as e:
         pytest.fail(f"Graph schema validation failed: {e.message}")
 

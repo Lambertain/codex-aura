@@ -4,11 +4,11 @@ import pytest
 from datetime import datetime
 from pathlib import Path
 
-from src.codex_aura.models.graph import Graph, Repository, Stats
-from src.codex_aura.models.node import Node
-from src.codex_aura.models.edge import Edge, EdgeType
-from src.codex_aura.storage.sqlite import SQLiteStorage
-from src.codex_aura.api.server import traverse_dependencies
+from codex_aura.models.graph import Graph, Repository, Stats
+from codex_aura.models.node import Node
+from codex_aura.models.edge import Edge, EdgeType
+from codex_aura.storage.sqlite import SQLiteStorage
+from codex_aura.api.server import traverse_dependencies
 
 
 def test_traverse_dependencies_basic():
@@ -129,7 +129,7 @@ def test_storage_operations(tmp_path):
 
 def test_new_endpoints_registered():
     """Test that new endpoints are properly registered."""
-    from src.codex_aura.api.server import app
+    from codex_aura.api.server import app
 
     routes = [route.path for route in app.routes]
     assert "/api/v1/context" in routes
@@ -139,7 +139,7 @@ def test_new_endpoints_registered():
 
 def test_context_request_model():
     """Test ContextRequest model validation."""
-    from src.codex_aura.api.server import ContextRequest
+    from codex_aura.api.server import ContextRequest
     from pydantic import ValidationError
     import pytest
 
@@ -172,9 +172,9 @@ def test_context_request_model():
 
 def test_delete_graph_storage(tmp_path):
     """Test delete graph storage operation."""
-    from src.codex_aura.storage.sqlite import SQLiteStorage
-    from src.codex_aura.models.graph import Graph, Repository, Stats
-    from src.codex_aura.models.node import Node
+    from codex_aura.storage.sqlite import SQLiteStorage
+    from codex_aura.models.graph import Graph, Repository, Stats
+    from codex_aura.models.node import Node
     from datetime import datetime
 
     storage = SQLiteStorage(db_path=str(tmp_path / "test.db"))
@@ -214,7 +214,7 @@ def test_delete_graph_storage(tmp_path):
 
 def test_capabilities_endpoint():
     """Test capabilities endpoint."""
-    from src.codex_aura.plugins.registry import PluginRegistry
+    from codex_aura.plugins.registry import PluginRegistry
 
     # Test the underlying function directly
     data = PluginRegistry.get_all_capabilities()

@@ -3,7 +3,7 @@
   "displayName": "Codex Aura",
   "description": "Interactive code dependency visualization and analysis tool",
   "version": "0.1.0",
-  "publisher": "codex-aura",
+  "publisher": "CodexAura",
   "engines": {"vscode": "^1.85.0"},
   "categories": ["Other"],
   "icon": "media/icon.png",
