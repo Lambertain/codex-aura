@@ -9,7 +9,7 @@ from ..models.edge import Edge, EdgeType
 from ..models.git import ChangedFiles
 from ..models.graph import Graph, Repository, Stats, remove_nodes_by_path, replace_nodes_for_path, rebuild_edges_for_paths
 from ..models.node import Node
-from .base import BaseAnalyzer
+from .base import BaseAnalyzer, Reference
 from .utils import find_python_files, get_changed_files, get_current_sha, get_file_blame, load_ignore_patterns
 
 logger = logging.getLogger("codex_aura")
@@ -353,6 +353,41 @@ class PythonAnalyzer(BaseAnalyzer):
         except Exception as e:
             logger.error(f"Unexpected error analyzing {file_path}: {e}")
             raise
+
+    def resolve_references(self, node: Node) -> List[Reference]:
+        """Resolve references from a node to other nodes.
+
+        For file nodes, this analyzes imports and calls.
+        For function/class nodes, this analyzes their internal references.
+
+        Args:
+            node: The node to resolve references for.
+
+        Returns:
+            List of Reference objects representing relationships.
+        """
+        references = []
+
+        # For file nodes, we need to re-analyze the file
+        if node.type == "file":
+            file_path = Path(node.path)
+            if file_path.exists():
+                try:
+                    # Re-analyze the file to get edges
+                    _, edges = self.analyze_file(file_path, file_path.parent, {file_path})
+                    for edge in edges:
+                        references.append(Reference(
+                            target_fqn=edge.target,
+                            edge_type=edge.type
+                        ))
+                except Exception as e:
+                    logger.warning(f"Failed to resolve references for {node.path}: {e}")
+
+        # For function/class nodes, we could analyze their content
+        # For now, return empty list as this would require more complex analysis
+        # of the node's source code to find internal references
+
+        return references
 
 
 def parse_file_node(file_path: Path, repo_root: Path) -> Node:

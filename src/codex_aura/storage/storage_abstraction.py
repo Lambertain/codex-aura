@@ -60,6 +60,20 @@ class GraphStorage(ABC):
         """
         pass
 
+    @abstractmethod
+    @asynccontextmanager
+    async def transaction(self, repo_id: str):
+        """
+        Context manager for database transactions.
+
+        Args:
+            repo_id: Repository identifier for the transaction
+
+        Yields:
+            Transaction object for performing operations
+        """
+        pass
+
 
 class SQLiteStorageBackend(GraphStorage):
     """SQLite storage backend implementation."""
@@ -148,6 +162,27 @@ class Neo4jStorageBackend(GraphStorage):
     async def query_dependencies(self, fqn: str, depth: int = 2) -> List[Node]:
         """Query dependencies from Neo4j storage."""
         return await self.queries.get_dependencies(fqn, depth)
+
+    @asynccontextmanager
+    async def transaction(self, repo_id: str):
+        """
+        Context manager for Neo4j transactions.
+
+        Args:
+            repo_id: Repository identifier
+
+        Yields:
+            GraphTransaction object
+        """
+        from ..sync.incremental import Neo4jGraphTransaction
+        async with self.client.session() as session:
+            txn = Neo4jGraphTransaction(session, repo_id)
+            try:
+                yield txn
+                # If we get here without exception, commit is implicit
+            except Exception:
+                # Rollback would happen automatically on session exit
+                raise
 
 
 def get_storage(backend: Optional[StorageBackend] = None) -> GraphStorage:

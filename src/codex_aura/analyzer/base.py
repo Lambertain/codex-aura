@@ -37,3 +37,15 @@ class BaseAnalyzer(ABC):
             List of Node objects representing entities found in the file.
         """
         pass
+
+    @abstractmethod
+    def resolve_references(self, node: Node) -> List["Reference"]:
+        """Resolve references from a node to other nodes.
+
+        Args:
+            node: The node to resolve references for.
+
+        Returns:
+            List of Reference objects representing relationships.
+        """
+        pass

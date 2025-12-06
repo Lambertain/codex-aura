@@ -43,6 +43,13 @@ class VectorStore:
         ]
         self.client.upsert(collection_name=f"repo_{repo_id}", points=points)
 
+    async def delete_by_filter(self, collection_name: str, filter_conditions: dict):
+        """Delete points by filter conditions."""
+        self.client.delete(
+            collection_name=collection_name,
+            points_selector=filter_conditions
+        )
+
 
 class SemanticSearch:
     def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore):
