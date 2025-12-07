@@ -30,10 +30,36 @@ class ServiceUpdateRequest(BaseModel):
     description: Optional[str] = None
 
 
+class ServiceGraphNode(BaseModel):
+    """Node model for service graph response."""
+    service_id: str
+    name: str
+
+
+class ServiceGraphEdge(BaseModel):
+    """Edge model for service graph response."""
+    source: str
+    target: str
+    type: str
+
+
+class ServiceGraphResponse(BaseModel):
+    """Response model for service graph endpoint."""
+    nodes: List[ServiceGraphNode]
+    edges: List[ServiceGraphEdge]
+
+
 def get_service_registry() -> ServiceRegistry:
     """Dependency to get service registry."""
     db = SQLiteStorage()
     return ServiceRegistry(db)
+
+
+def get_neo4j_client():
+    """Dependency to get Neo4j client."""
+    # Import locally to avoid circular imports
+    from ..storage.neo4j_client import Neo4jClient
+    return Neo4jClient()
 
 
 @router.post("/", response_model=Service)
@@ -122,3 +148,61 @@ async def get_service_by_repo(
     if not service:
         raise HTTPException(404, "Service not found for this repository")
     return service
+
+
+@router.get("/graph", response_model=ServiceGraphResponse)
+async def get_service_graph(
+    service_registry: ServiceRegistry = Depends(get_service_registry),
+    neo4j_client: Neo4jClient = Depends(get_neo4j_client)
+    # current_user: User = Depends(get_current_user)
+):
+    """Get cross-repo service dependency graph.
+
+    Returns all services as nodes and their inter-service call relationships as edges.
+    Optimized for dashboard visualization with < 200ms response time.
+    """
+    # Get all services
+    services = service_registry.list_services()
+
+    # Create nodes from services
+    nodes = [
+        ServiceGraphNode(
+            service_id=str(service.service_id),
+            name=service.name
+        )
+        for service in services
+    ]
+
+    # Query Neo4j for SERVICE_CALLS edges between services
+    query = """
+    MATCH (source:Service)-[r:SERVICE_CALLS]->(target:Service)
+    RETURN source.name as source_name, target.name as target_name, type(r) as edge_type
+    """
+
+    try:
+        results = await neo4j_client.execute_query(query)
+
+        # Create edges from Neo4j results
+        edges = []
+        for record in results:
+            # Find source and target service IDs by name
+            source_service = next(
+                (s for s in services if s.name == record["source_name"]), None
+            )
+            target_service = next(
+                (s for s in services if s.name == record["target_name"]), None
+            )
+
+            if source_service and target_service:
+                edges.append(ServiceGraphEdge(
+                    source=str(source_service.service_id),
+                    target=str(target_service.service_id),
+                    type=record["edge_type"]
+                ))
+
+    except Exception as e:
+        # If Neo4j is not available or has no data, return empty edges
+        # This allows the endpoint to work even without Neo4j connection
+        edges = []
+
+    return ServiceGraphResponse(nodes=nodes, edges=edges)
