@@ -6,35 +6,41 @@ from typing import List, Optional
 
 from .dependency_scanner import MultiRepoDependencyScanner
 from ..storage.neo4j_client import Neo4jClient
+from ..storage.service_registry import ServiceRegistry
+from ..storage.sqlite import SQLiteStorage
 from ..models.graph import Graph
 
 
 class DependencyScanService:
     """Service for scanning and storing inter-service dependencies."""
 
-    def __init__(self, neo4j_client: Optional[Neo4jClient] = None):
+    def __init__(self, neo4j_client: Optional[Neo4jClient] = None, db: Optional[SQLiteStorage] = None):
         """
         Initialize the dependency scan service.
 
         Args:
             neo4j_client: Neo4j client for storing results. If None, creates a new one.
+            db: SQLite storage for service registry. If None, creates a new one.
         """
-        self.scanner = MultiRepoDependencyScanner()
+        self.db = db or SQLiteStorage()
+        self.service_registry = ServiceRegistry(self.db)
+        self.scanner = MultiRepoDependencyScanner(self.service_registry)
         self.neo4j_client = neo4j_client or Neo4jClient()
 
-    async def scan_and_store_dependencies(self, repo_paths: List[Path], graph_sha: Optional[str] = None) -> str:
+    async def scan_and_store_dependencies(self, repo_ids: List[str], repo_paths: Optional[List[Path]] = None, graph_sha: Optional[str] = None) -> str:
         """
         Scan multiple repositories for dependencies and store in Neo4j.
 
         Args:
-            repo_paths: List of paths to repository root directories.
+            repo_ids: List of repository IDs.
+            repo_paths: Optional list of paths to repository root directories.
             graph_sha: Optional SHA for the dependency graph.
 
         Returns:
             Graph ID in Neo4j.
         """
         # Scan repositories
-        dependency_graph = self.scanner.analyze(repo_paths)
+        dependency_graph = self.scanner.analyze(repo_ids, repo_paths)
 
         # Set SHA if provided
         if graph_sha:
@@ -45,17 +51,18 @@ class DependencyScanService:
 
         return graph_id
 
-    async def scan_repositories(self, repo_paths: List[Path]) -> Graph:
+    async def scan_repositories(self, repo_ids: List[str], repo_paths: Optional[List[Path]] = None) -> Graph:
         """
         Scan repositories without storing results.
 
         Args:
-            repo_paths: List of paths to repository root directories.
+            repo_ids: List of repository IDs.
+            repo_paths: Optional list of paths to repository root directories.
 
         Returns:
             Dependency graph.
         """
-        return self.scanner.analyze(repo_paths)
+        return self.scanner.analyze(repo_ids, repo_paths)
 
     async def close(self):
         """Close the Neo4j client connection."""

@@ -48,6 +48,18 @@ class SQLiteStorage:
                 )
             """)
 
+            # Create services table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS services (
+                    service_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    repo_id TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Create usage_events table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS usage_events (
@@ -64,6 +76,12 @@ class SQLiteStorage:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp
                 ON usage_events(user_id, timestamp)
+            """)
+
+            # Create index on repo_id for services
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_services_repo_id
+                ON services(repo_id)
             """)
 
             conn.commit()
@@ -294,10 +312,35 @@ class SQLiteStorage:
             # Already handled in _init_db
             self._apply_migration(1, "initial_schema")
 
+        # Migration 2: Add services table
+        if current_version < 2:
+            with sqlite3.connect(self.db_path) as conn:
+                # Create services table
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS services (
+                        service_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        repo_id TEXT NOT NULL UNIQUE,
+                        description TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Create index on repo_id for services
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_services_repo_id
+                    ON services(repo_id)
+                """)
+
+                conn.commit()
+
+            self._apply_migration(2, "add_services_table")
+
         # Future migrations can be added here
-        # if current_version < 2:
+        # if current_version < 3:
         #     # Add new table/index
-        #     self._apply_migration(2, "add_indexes")
+        #     self._apply_migration(3, "add_indexes")
 
     def _get_schema_version(self) -> int:
         """Get current schema version."""
@@ -346,3 +389,115 @@ class SQLiteStorage:
                 timestamp.isoformat()
             ))
             conn.commit()
+
+    def save_service(self, service) -> None:
+        """Save a service to the database.
+
+        Args:
+            service: Service object to save
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO services
+                (service_id, name, repo_id, description, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                str(service.service_id),
+                service.name,
+                str(service.repo_id),
+                service.description,
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+
+    def get_service_by_repo_id(self, repo_id: str):
+        """Get service by repository ID.
+
+        Args:
+            repo_id: Repository ID
+
+        Returns:
+            Service object or None if not found
+        """
+        from ..models.service import Service
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT service_id, name, repo_id, description
+                FROM services WHERE repo_id = ?
+            """, (repo_id,))
+
+            row = cursor.fetchone()
+            if row:
+                return Service(
+                    service_id=row[0],
+                    name=row[1],
+                    repo_id=row[2],
+                    description=row[3]
+                )
+        return None
+
+    def get_service_by_id(self, service_id: str):
+        """Get service by service ID.
+
+        Args:
+            service_id: Service ID
+
+        Returns:
+            Service object or None if not found
+        """
+        from ..models.service import Service
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT service_id, name, repo_id, description
+                FROM services WHERE service_id = ?
+            """, (service_id,))
+
+            row = cursor.fetchone()
+            if row:
+                return Service(
+                    service_id=row[0],
+                    name=row[1],
+                    repo_id=row[2],
+                    description=row[3]
+                )
+        return None
+
+    def list_services(self):
+        """List all services.
+
+        Returns:
+            List of Service objects
+        """
+        from ..models.service import Service
+
+        services = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                SELECT service_id, name, repo_id, description
+                FROM services ORDER BY name
+            """)
+
+            for row in cursor.fetchall():
+                services.append(Service(
+                    service_id=row[0],
+                    name=row[1],
+                    repo_id=row[2],
+                    description=row[3]
+                ))
+        return services
+
+    def delete_service(self, service_id: str) -> bool:
+        """Delete a service by ID.
+
+        Args:
+            service_id: Service ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("DELETE FROM services WHERE service_id = ?", (service_id,))
+            conn.commit()
+            return cursor.rowcount > 0

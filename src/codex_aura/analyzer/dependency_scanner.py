@@ -9,6 +9,8 @@ from .base import BaseAnalyzer
 from ..models.graph import Graph
 from ..models.node import Node
 from ..models.edge import Edge, EdgeType
+from ..storage.service_registry import ServiceRegistry
+from ..storage.sqlite import SQLiteStorage
 
 
 @dataclass
@@ -31,7 +33,8 @@ class MultiRepoDependencyScanner(BaseAnalyzer):
     - Import-like references to other services
     """
 
-    def __init__(self):
+    def __init__(self, service_registry: Optional[ServiceRegistry] = None):
+        self.service_registry = service_registry
         # Python patterns
         self.python_patterns = {
             'http': [
@@ -91,11 +94,13 @@ class MultiRepoDependencyScanner(BaseAnalyzer):
             '.jsx': self.typescript_patterns,
         }
 
-    def analyze(self, repo_paths: List[Path]) -> Graph:
+    def analyze(self, repo_ids: List[str], repo_paths: Optional[List[Path]] = None) -> Graph:
         """Analyze multiple repositories for inter-service dependencies.
 
         Args:
-            repo_paths: List of paths to repository root directories.
+            repo_ids: List of repository IDs.
+            repo_paths: Optional list of paths to repository root directories.
+                        If None, assumes repositories are not available locally.
 
         Returns:
             Graph containing service nodes and dependency edges.
@@ -103,22 +108,33 @@ class MultiRepoDependencyScanner(BaseAnalyzer):
         all_dependencies = []
         service_nodes = []
 
-        for repo_path in repo_paths:
-            repo_name = repo_path.name
+        for i, repo_id in enumerate(repo_ids):
+            # Get service name from registry
+            service_name = None
+            if self.service_registry:
+                service_name = self.service_registry.get_service_name_by_repo_id(repo_id)
+
+            if not service_name:
+                # Fallback to repo_id if no service registered
+                service_name = repo_id
+
             service_node = Node(
-                id=f"service_{repo_name}",
+                id=f"service_{service_name}",
                 type="service",
-                name=repo_name,
-                path=str(repo_path)
+                name=service_name,
+                path=repo_id  # Store repo_id in path field
             )
             service_nodes.append(service_node)
 
-            # Analyze all supported file types
-            for ext in self.service_patterns.keys():
-                files = list(repo_path.rglob(f"*{ext}"))
-                for file_path in files:
-                    deps = self._analyze_file_dependencies(file_path, repo_name)
-                    all_dependencies.extend(deps)
+            # Analyze files if paths are provided
+            if repo_paths and i < len(repo_paths):
+                repo_path = repo_paths[i]
+                # Analyze all supported file types
+                for ext in self.service_patterns.keys():
+                    files = list(repo_path.rglob(f"*{ext}"))
+                    for file_path in files:
+                        deps = self._analyze_file_dependencies(file_path, service_name)
+                        all_dependencies.extend(deps)
 
         # Create edges from dependencies
         edges = []
