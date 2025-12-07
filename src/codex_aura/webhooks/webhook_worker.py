@@ -12,6 +12,7 @@ sys.path.insert(0, str(src_path))
 
 from .queue import WorkerSettings, set_webhook_processor, get_worker
 from .processor import WebhookProcessor
+from ..snapshot.snapshot_service import SnapshotService
 
 # Configure logging
 logging.basicConfig(
@@ -27,8 +28,8 @@ async def main():
 
     try:
         # Initialize webhook processor
-        # Note: You might need to pass dependencies like graph_updater here
-        processor = WebhookProcessor(graph_updater=None)  # TODO: inject proper dependencies
+        snapshot_service = SnapshotService()
+        processor = WebhookProcessor(snapshot_service=snapshot_service)
         set_webhook_processor(processor)
 
         # Create and start worker

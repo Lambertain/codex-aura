@@ -1,10 +1,11 @@
 """Webhook event processor."""
 
 import logging
-from typing import Dict, Any, Callable, Awaitable
+from typing import Dict, Any, Callable, Awaitable, Optional
 from datetime import datetime
 
 from .models import WebhookEvent
+from ..snapshot.snapshot_service import SnapshotService
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 class WebhookProcessor:
     """Processes webhook events from Git hosting services."""
 
-    def __init__(self, graph_updater=None):
-        self.graph_updater = graph_updater
+    def __init__(self, snapshot_service: Optional[SnapshotService] = None):
+        self.snapshot_service = snapshot_service or SnapshotService()
         self.handlers: Dict[str, Callable[[str, Dict[str, Any]], Awaitable[None]]] = {
             "push": self.handle_push,
             "pull_request": self.handle_pull_request,
@@ -39,29 +40,25 @@ class WebhookProcessor:
             raise
 
     async def handle_push(self, repo_id: str, data: Dict[str, Any]) -> None:
-        """Handle push event - save graph snapshot for each commit."""
+        """Handle push event - create graph snapshot for each commit."""
         commits = data.get("commits", [])
         if not commits:
             logger.info(f"No commits in push event for repo {repo_id}")
             return
 
-        # Save graph snapshot for each commit
+        # Create graph snapshot for each commit
         for commit in commits:
             commit_sha = commit.get("id")
             if not commit_sha:
                 continue
 
-            # Collect changed files for this commit
-            changed_files = set()
-            changed_files.update(commit.get("added", []))
-            changed_files.update(commit.get("modified", []))
-            changed_files.update(commit.get("removed", []))
-
-            if changed_files and self.graph_updater:
-                logger.info(f"Saving graph snapshot for commit {commit_sha[:8]} in repo {repo_id}")
-                await self.graph_updater.save_commit_snapshot(repo_id, commit_sha, list(changed_files))
-            else:
-                logger.info(f"No files changed in commit {commit_sha[:8]} for repo {repo_id}")
+            try:
+                logger.info(f"Creating graph snapshot for commit {commit_sha[:8]} in repo {repo_id}")
+                snapshot_id = await self.snapshot_service.create_snapshot(repo_id, commit_sha)
+                logger.info(f"Snapshot {snapshot_id} created for commit {commit_sha[:8]} in repo {repo_id}")
+            except Exception as e:
+                logger.error(f"Failed to create snapshot for commit {commit_sha[:8]} in repo {repo_id}: {e}")
+                # Continue processing other commits even if one fails
 
     async def handle_pull_request(self, repo_id: str, data: Dict[str, Any]) -> None:
         """Handle pull request event."""
