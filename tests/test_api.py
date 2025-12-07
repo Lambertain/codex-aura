@@ -134,6 +134,7 @@ def test_new_endpoints_registered():
     routes = [route.path for route in app.routes]
     assert "/api/v1/context" in routes
     assert "/api/v1/graph/{graph_id}/impact" in routes
+    assert "/api/v1/repos/{repo_id}/impact" in routes  # New impact visualization endpoint
     assert "/api/v1/graph/{graph_id}" in routes  # DELETE endpoint
 
 

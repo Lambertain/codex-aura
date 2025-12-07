@@ -553,6 +553,14 @@ class ImpactResponse(BaseModel):
     affected_tests: list[str]
 
 
+class ImpactVisualizationResponse(BaseModel):
+    """Response model for impact visualization endpoint."""
+
+    direct: list[str]
+    indirect: list[str]
+    graph: dict
+
+
 class DeleteGraphResponse(BaseModel):
     """Response model for delete graph endpoint."""
 
@@ -2190,6 +2198,103 @@ async def get_impact_analysis(graph_id: str, files: str, current_user=Depends(re
         changed_files=changed_files,
         affected_files=affected_files,
         affected_tests=affected_tests
+    )
+
+
+@app.get("/api/v1/repos/{repo_id}/impact", response_model=ImpactVisualizationResponse)
+@limiter.limit("30/minute")
+async def get_impact_visualization(
+    repo_id: str,
+    file: str,
+    depth: int = 3,
+    current_user=Depends(require_auth)
+):
+    """
+    Get impact visualization for a specific file.
+
+    Returns direct and indirect dependencies with their graph representation.
+    Supports configurable depth limit for dependency traversal.
+    """
+    if depth < 1 or depth > 5:
+        raise HTTPException(status_code=400, detail="Depth must be between 1 and 5")
+
+    # Load graph by repo_id (assuming repo_id maps to graph_id)
+    graph = storage.load_graph(repo_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail=f"Repository '{repo_id}' not found")
+
+    # Check repository ownership
+    if graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
+    # Validate file exists in graph
+    if not any(n.path == file for n in graph.nodes if n.type == "file"):
+        raise HTTPException(status_code=404, detail=f"File '{file}' not found in graph")
+
+    # Find all nodes in the specified file
+    file_nodes = [n for n in graph.nodes if n.path == file]
+
+    # Collect all dependent files (direct and indirect)
+    direct_files = set()
+    indirect_files = set()
+    visited_nodes = set()
+    visited_files = set([file])  # Don't include the file itself
+
+    # BFS traversal to find dependencies
+    queue = deque()
+    for node in file_nodes:
+        queue.append((node.id, 0))  # (node_id, current_depth)
+        visited_nodes.add(node.id)
+
+    while queue:
+        current_node_id, current_depth = queue.popleft()
+
+        if current_depth >= depth:
+            continue
+
+        # Find incoming edges (who depends on this node)
+        incoming_edges = [e for e in graph.edges if e.target == current_node_id]
+
+        for edge in incoming_edges:
+            source_node = next((n for n in graph.nodes if n.id == edge.source), None)
+            if source_node and source_node.path != file:  # Don't include the file itself
+                if source_node.path not in visited_files:
+                    visited_files.add(source_node.path)
+                    if current_depth == 0:
+                        direct_files.add(source_node.path)
+                    else:
+                        indirect_files.add(source_node.path)
+
+                # Continue traversal if not at max depth
+                if current_depth + 1 < depth and source_node.id not in visited_nodes:
+                    visited_nodes.add(source_node.id)
+                    queue.append((source_node.id, current_depth + 1))
+
+    # Build graph representation
+    # Include the original file and all dependent files
+    relevant_files = {file} | direct_files | indirect_files
+    relevant_nodes = [n for n in graph.nodes if n.path in relevant_files]
+    relevant_node_ids = {n.id for n in relevant_nodes}
+
+    # Include edges between relevant nodes
+    relevant_edges = [
+        e for e in graph.edges
+        if e.source in relevant_node_ids and e.target in relevant_node_ids
+    ]
+
+    # Convert to dict format
+    nodes_data = [n.model_dump() for n in relevant_nodes]
+    edges_data = [e.model_dump() for e in relevant_edges]
+
+    graph_data = {
+        "nodes": nodes_data,
+        "edges": edges_data
+    }
+
+    return ImpactVisualizationResponse(
+        direct=sorted(list(direct_files)),
+        indirect=sorted(list(indirect_files)),
+        graph=graph_data
     )
 
 
