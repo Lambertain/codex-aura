@@ -1,0 +1,162 @@
+name: PR Impact Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [ main, develop ]
+
+jobs:
+  analyze-impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { exec } = require('child_process');
+            const { promisify } = require('util');
+            const execAsync = promisify(exec);
+
+            try {
+              // Get changed files in PR
+              const { stdout } = await execAsync(`git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}`);
+              const changedFiles = stdout.trim().split('\n').filter(file => file.length > 0);
+
+              console.log('Changed files:', changedFiles);
+
+              // Filter to only include relevant files (Python files, config files, etc.)
+              const relevantFiles = changedFiles.filter(file =>
+                file.endsWith('.py') ||
+                file.endsWith('.yml') ||
+                file.endsWith('.yaml') ||
+                file.endsWith('.json') ||
+                file.endsWith('.toml') ||
+                file.endsWith('.md') ||
+                file.includes('requirements') ||
+                file.includes('pyproject') ||
+                file.includes('setup')
+              );
+
+              console.log('Relevant changed files:', relevantFiles);
+
+              return relevantFiles;
+            } catch (error) {
+              console.error('Error getting changed files:', error);
+              return [];
+            }
+          result-encoding: json
+
+      - name: Analyze impact
+        id: impact-analysis
+        if: steps.changed-files.outputs.result != '[]'
+        run: |
+          CHANGED_FILES='${{ steps.changed-files.outputs.result }}'
+          API_URL="${{ secrets.CODEX_AURA_API_URL }}/api/v1/impact/pr"
+          REPO_ID="${{ github.repository }}"
+
+          echo "Calling API: $API_URL"
+          echo "Repo ID: $REPO_ID"
+          echo "Changed files: $CHANGED_FILES"
+
+          # Call the impact analysis API
+          RESPONSE=$(curl -s -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "{\"repo_id\": \"$REPO_ID\", \"changed_files\": $CHANGED_FILES}")
+
+          echo "API Response: $RESPONSE"
+
+          # Extract data from response
+          IMPACTED_FILES=$(echo "$RESPONSE" | jq -r '.impacted_files | join("\n")' 2>/dev/null || echo "")
+          RISK_LEVEL=$(echo "$RESPONSE" | jq -r '.risk_level' 2>/dev/null || echo "unknown")
+          COMMENT=$(echo "$RESPONSE" | jq -r '.comment' 2>/dev/null || echo "Analysis failed")
+
+          # Set outputs
+          echo "impacted-files<<EOF" >> $GITHUB_OUTPUT
+          echo "$IMPACTED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "risk-level=$RISK_LEVEL" >> $GITHUB_OUTPUT
+
+          echo "comment<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        if: steps.impact-analysis.outputs.comment != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const baseComment = `${{ steps.impact-analysis.outputs.comment }}`;
+            const comment = baseComment + '\n\n***\n\n*This analysis was generated automatically by Codex Aura Impact Analysis.*';
+
+            // Check if we already commented
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existingComment = comments.find(c =>
+              c.body.includes('This analysis was generated automatically by Codex Aura Impact Analysis')
+            );
+
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: comment
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+      - name: Add risk label
+        if: steps.impact-analysis.outputs.risk-level != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const riskLevel = '${{ steps.impact-analysis.outputs.risk-level }}';
+            const labelName = `impact:${riskLevel}`;
+
+            try {
+              // Remove existing impact labels
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+
+              const impactLabels = labels.filter(l => l.name.startsWith('impact:'));
+              for (const label of impactLabels) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name: label.name
+                });
+              }
+
+              // Add new risk label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: [labelName]
+              });
+            } catch (error) {
+              console.log('Error managing labels:', error.message);
+            }
