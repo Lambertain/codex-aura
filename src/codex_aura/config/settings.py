@@ -3,7 +3,7 @@
 import os
 from typing import Optional
 
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     neo4j_uri: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     neo4j_user: str = os.getenv("NEO4J_USER", "neo4j")
     neo4j_password: str = os.getenv("NEO4J_PASSWORD", "password")
+    postgres_url: str = os.getenv("POSTGRES_URL", "postgresql://user:password@localhost:5432/codex_aura")
 
     # OpenAI settings
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")

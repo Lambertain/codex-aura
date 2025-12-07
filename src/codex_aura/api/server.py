@@ -35,6 +35,7 @@ from ..context import SemanticRankingEngine, rank_context
 from ..api.budget import router as budget_router
 from ..api.billing import router as billing_router
 from ..api.usage import router as usage_router
+from ..api.api_keys import router as api_keys_router
 from ..api.middleware.rate_limit import get_rate_limit
 from ..api.middleware.quota import QuotaEnforcementMiddleware
 from ..api.middleware.auth import require_auth, optional_auth
@@ -153,6 +154,39 @@ class GraphUpdater:
             logger.error(f"Failed to update graph for repo {repo_id}: {e}")
             raise
 
+    async def save_commit_snapshot(self, repo_id: str, commit_sha: str, changed_files: list[str]) -> None:
+        """Save a graph snapshot for a specific commit."""
+        try:
+            # Load existing graph
+            existing_graph = self.storage.load_graph(repo_id)
+            if not existing_graph:
+                logger.warning(f"No existing graph found for repo {repo_id}")
+                return
+
+            # For now, do a full re-analysis (incremental updates would be more complex)
+            repo_path = Path(existing_graph.repository.path)
+            if not repo_path.exists():
+                logger.error(f"Repository path {repo_path} no longer exists")
+                return
+
+            logger.info(f"Saving commit snapshot for {commit_sha[:8]} in repo {repo_id}")
+
+            # Re-analyze the repository
+            new_graph = self.analyzer.analyze(repo_path, existing_graph.repository.user_id)
+
+            # Set commit SHA in the graph metadata
+            new_graph.sha = commit_sha
+
+            # Generate graph ID with commit SHA
+            graph_id = f"g_{commit_sha[:12]}"
+            self.storage.save_graph(new_graph, graph_id)
+
+            logger.info(f"Saved commit snapshot {graph_id} for commit {commit_sha[:8]} in repo {repo_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to save commit snapshot for {commit_sha[:8]} in repo {repo_id}: {e}")
+            raise
+
 
 # Initialize graph updater
 graph_updater = GraphUpdater(storage, PythonAnalyzer())
@@ -201,6 +235,7 @@ instrument_app(app)
 app.include_router(budget_router, prefix="/api/v1", tags=["budget"])
 app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
 app.include_router(usage_router, prefix="/api/v1", tags=["usage"])
+app.include_router(api_keys_router, prefix="/api/v1", tags=["api-keys"])
 
 # Mount static files
 import os

@@ -39,24 +39,29 @@ class WebhookProcessor:
             raise
 
     async def handle_push(self, repo_id: str, data: Dict[str, Any]) -> None:
-        """Handle push event - update graph."""
+        """Handle push event - save graph snapshot for each commit."""
         commits = data.get("commits", [])
         if not commits:
             logger.info(f"No commits in push event for repo {repo_id}")
             return
 
-        # Collect all changed files
-        changed_files = set()
+        # Save graph snapshot for each commit
         for commit in commits:
+            commit_sha = commit.get("id")
+            if not commit_sha:
+                continue
+
+            # Collect changed files for this commit
+            changed_files = set()
             changed_files.update(commit.get("added", []))
             changed_files.update(commit.get("modified", []))
             changed_files.update(commit.get("removed", []))
 
-        if changed_files and self.graph_updater:
-            logger.info(f"Updating graph for repo {repo_id} with {len(changed_files)} changed files")
-            await self.graph_updater.update_files(repo_id, list(changed_files))
-        else:
-            logger.info(f"No files to update for repo {repo_id}")
+            if changed_files and self.graph_updater:
+                logger.info(f"Saving graph snapshot for commit {commit_sha[:8]} in repo {repo_id}")
+                await self.graph_updater.save_commit_snapshot(repo_id, commit_sha, list(changed_files))
+            else:
+                logger.info(f"No files changed in commit {commit_sha[:8]} for repo {repo_id}")
 
     async def handle_pull_request(self, repo_id: str, data: Dict[str, Any]) -> None:
         """Handle pull request event."""

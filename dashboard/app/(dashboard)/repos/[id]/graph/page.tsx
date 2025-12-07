@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,10 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Settings
+  Settings,
+  GitBranch,
+  GitCommit,
+  Diff
 } from "lucide-react";
 import { GraphVisualization } from "@/components/graph/GraphVisualization";
 import { NodeDetailsPanel } from "@/components/graph/NodeDetailsPanel";
@@ -34,6 +37,9 @@ export default function GraphPage() {
     EXTENDS: true,
   });
   const [showDetailsPanel, setShowDetailsPanel] = useState(true);
+  const [diffMode, setDiffMode] = useState(false);
+  const [baseCommit, setBaseCommit] = useState<string>("");
+  const [compareCommit, setCompareCommit] = useState<string>("");
 
   const { data: graphData } = useGraph(repoId as string);
 
@@ -80,6 +86,14 @@ export default function GraphPage() {
           <p className="text-muted-foreground">Interactive visualization of your codebase relationships</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant={diffMode ? "default" : "outline"}
+            size="sm"
+            onClick={() => setDiffMode(!diffMode)}
+          >
+            <Diff className="w-4 h-4 mr-2" />
+            Diff Mode
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -144,6 +158,62 @@ export default function GraphPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Diff Mode Controls */}
+      {diffMode && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitBranch className="w-5 h-5" />
+              Diff Mode: Compare Commits
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-2 block">Base Commit (older)</label>
+                <input
+                  type="text"
+                  placeholder="Enter commit SHA..."
+                  value={baseCommit}
+                  onChange={(e) => setBaseCommit(e.target.value)}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-2 block">Compare Commit (newer)</label>
+                <input
+                  type="text"
+                  placeholder="Enter commit SHA..."
+                  value={compareCommit}
+                  onChange={(e) => setCompareCommit(e.target.value)}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!baseCommit || !compareCommit}
+              >
+                <Diff className="w-4 h-4 mr-2" />
+                Show Diff
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setBaseCommit("");
+                  setCompareCommit("");
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Graph Container */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
