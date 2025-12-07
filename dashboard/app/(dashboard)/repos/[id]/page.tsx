@@ -16,7 +16,8 @@ import {
   Zap,
   TrendingUp,
   Users,
-  Code
+  Code,
+  Network
 } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import Link from "next/link";
@@ -95,6 +96,12 @@ export default function RepoOverviewPage() {
           <p className="text-muted-foreground">Real-time insights into your codebase</p>
         </div>
         <div className="flex gap-2">
+          <Link href={`/repos/${repoId}/graph`}>
+            <Button variant="outline">
+              <Activity className="w-4 h-4 mr-2" />
+              View Graph
+            </Button>
+          </Link>
           <Link href={`/repos/${repoId}/search`}>
             <Button variant="outline">
               <Code className="w-4 h-4 mr-2" />

@@ -9,12 +9,16 @@ interface GraphVisualizationProps {
   repoId: string;
   onNodeSelect: (node: GraphNode | null) => void;
   selectedNode: GraphNode | null;
+  nodeFilters?: { file: boolean; class: boolean; function: boolean };
+  edgeFilters?: { IMPORTS: boolean; CALLS: boolean; EXTENDS: boolean };
 }
 
 export function GraphVisualization({
   repoId,
   onNodeSelect,
-  selectedNode
+  selectedNode,
+  nodeFilters = { file: true, class: true, function: true },
+  edgeFilters = { IMPORTS: true, CALLS: true, EXTENDS: true }
 }: GraphVisualizationProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -31,6 +35,72 @@ export function GraphVisualization({
 
     // Clear previous
     svg.selectAll("*").remove();
+
+    // Filter nodes and edges based on filters
+    const filteredNodes = graphData.nodes.filter(node => nodeFilters[node.type]);
+    const filteredEdges = graphData.edges.filter(edge => edgeFilters[edge.type]);
+
+    // Performance optimization: limit nodes for large graphs
+    const MAX_NODES = 1000; // Limit for smooth performance
+    const shouldLimit = filteredNodes.length > MAX_NODES;
+
+    let displayNodes = filteredNodes;
+    let displayEdges = filteredEdges;
+
+    if (shouldLimit) {
+      // For large graphs, show a subset and warn user
+      displayNodes = filteredNodes.slice(0, MAX_NODES);
+      const visibleNodeIds = new Set(displayNodes.map(n => n.id));
+      displayEdges = filteredEdges.filter(edge =>
+        visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+      );
+    } else {
+      // Only include edges where both source and target nodes are visible
+      const visibleNodeIds = new Set(filteredNodes.map(n => n.id));
+      displayEdges = filteredEdges.filter(edge =>
+        visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+      );
+    }
+
+    // Focus on node function
+    const focusOnNode = (targetNode: GraphNode) => {
+      // Find connected nodes
+      const connectedNodeIds = new Set<string>();
+
+      displayEdges.forEach(edge => {
+        const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as any).id;
+        const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as any).id;
+
+        if (sourceId === targetNode.id) {
+          connectedNodeIds.add(targetId);
+        } else if (targetId === targetNode.id) {
+          connectedNodeIds.add(sourceId);
+        }
+      });
+
+      // Update visual highlighting
+      const svg = d3.select(svgRef.current!);
+      const g = svg.select("g");
+
+      // Dim non-connected nodes
+      g.selectAll("g")
+        .attr("opacity", (d: any) =>
+          d.id === targetNode.id || connectedNodeIds.has(d.id) ? 1 : 0.1
+        );
+
+      // Highlight connected edges
+      g.selectAll("line")
+        .attr("stroke-opacity", (d: any) => {
+          const sourceId = typeof d.source === 'string' ? d.source : (d.source as any).id;
+          const targetId = typeof d.target === 'string' ? d.target : (d.target as any).id;
+          return (sourceId === targetNode.id || targetId === targetNode.id) ? 1 : 0.1;
+        })
+        .attr("stroke-width", (d: any) => {
+          const sourceId = typeof d.source === 'string' ? d.source : (d.source as any).id;
+          const targetId = typeof d.target === 'string' ? d.target : (d.target as any).id;
+          return (sourceId === targetNode.id || targetId === targetNode.id) ? 3 : 1.5;
+        });
+    };
 
     // Setup zoom
     const zoom = d3.zoom<SVGSVGElement, unknown>()
@@ -54,8 +124,8 @@ export function GraphVisualization({
       .range(["#94a3b8", "#22c55e", "#f59e0b"]);
 
     // Force simulation
-    const simulation = d3.forceSimulation(graphData.nodes as d3.SimulationNodeDatum[])
-      .force("link", d3.forceLink(graphData.edges)
+    const simulation = d3.forceSimulation(displayNodes as d3.SimulationNodeDatum[])
+      .force("link", d3.forceLink(displayEdges)
         .id((d: any) => d.id)
         .distance(100))
       .force("charge", d3.forceManyBody().strength(-300))
@@ -65,7 +135,7 @@ export function GraphVisualization({
     // Draw edges
     const link = g.append("g")
       .selectAll("line")
-      .data(graphData.edges)
+      .data(displayEdges)
       .join("line")
       .attr("stroke", d => edgeColorScale(d.type))
       .attr("stroke-opacity", 0.6)
@@ -74,7 +144,7 @@ export function GraphVisualization({
     // Draw nodes
     const node = g.append("g")
       .selectAll("g")
-      .data(graphData.nodes)
+      .data(displayNodes)
       .join("g")
       .attr("cursor", "pointer")
       .call(d3.drag<any, GraphNode>()
@@ -102,6 +172,12 @@ export function GraphVisualization({
     node.on("click", (event, d) => {
       event.stopPropagation();
       onNodeSelect(d);
+    });
+
+    // Double-click handler for focus
+    node.on("dblclick", (event, d) => {
+      event.stopPropagation();
+      focusOnNode(d);
     });
 
     // Background click to deselect
@@ -144,7 +220,7 @@ export function GraphVisualization({
     return () => {
       simulation.stop();
     };
-  }, [graphData, selectedNode, onNodeSelect]);
+  }, [graphData, selectedNode, onNodeSelect, nodeFilters, edgeFilters]);
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-full">Loading graph...</div>;
