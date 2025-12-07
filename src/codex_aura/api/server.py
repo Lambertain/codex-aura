@@ -32,10 +32,11 @@ from ..search import EmbeddingService, VectorStore, SemanticSearch, HybridSearch
 from ..token_budget import BudgetAllocator, BudgetAnalytics, validate_budget_params, get_budget_preset, TokenCounter
 from ..budgeting.analytics import BudgetAnalyticsService
 from ..context import SemanticRankingEngine, rank_context
-from ..api.budget import router as budget_router, get_current_user
+from ..api.budget import router as budget_router
 from ..api.billing import router as billing_router
 from ..api.middleware.rate_limit import get_rate_limit
 from ..api.middleware.quota import QuotaEnforcementMiddleware
+from ..api.middleware.auth import require_auth, optional_auth
 from ..billing.usage import UsageTracker
 from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
@@ -138,7 +139,7 @@ class GraphUpdater:
             logger.info(f"Re-analyzing repository {repo_id} due to {len(changed_files)} changed files")
 
             # Re-analyze the repository
-            new_graph = self.analyzer.analyze(repo_path)
+            new_graph = self.analyzer.analyze(repo_path, existing_graph.repository.user_id)
 
             # Generate new graph ID and save
             import uuid
@@ -654,17 +655,28 @@ async def gitlab_webhook(
 
 # Sync status endpoints
 @app.get("/api/v1/repos/{repo_id}/sync/status")
-async def get_sync_status(repo_id: str):
+async def get_sync_status(repo_id: str, current_user=Depends(require_auth)):
     """Get sync status for a repository."""
+    # Check repository ownership
+    graph = storage.load_graph(repo_id)
+    if not graph or graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
     return await sync_tracker.get_status(repo_id)
 
 
 @app.post("/api/v1/repos/{repo_id}/sync/trigger")
 async def trigger_sync(
     repo_id: str,
-    target_sha: str | None = None
+    target_sha: str | None = None,
+    current_user=Depends(require_auth)
 ):
     """Manually trigger sync for a repository."""
+    # Check repository ownership
+    graph = storage.load_graph(repo_id)
+    if not graph or graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
     status = await sync_tracker.get_status(repo_id)
 
     if status.state == "syncing":
@@ -1339,7 +1351,7 @@ async def root():
 
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 @limiter.limit("10/minute")
-async def analyze(request: Request, body: AnalyzeRequest):
+async def analyze(request: Request, body: AnalyzeRequest, current_user=Depends(require_auth)):
     """
     Analyze a repository and generate a dependency graph.
 
@@ -1370,7 +1382,7 @@ async def analyze(request: Request, body: AnalyzeRequest):
         try:
             # Analyze repository
             analyzer = PythonAnalyzer()
-            graph = analyzer.analyze(repo_path)
+            graph = analyzer.analyze(repo_path, current_user.id)
 
             # Generate graph ID
             graph_id = f"g_{uuid.uuid4().hex[:12]}"
@@ -1452,10 +1464,12 @@ async def analyze(request: Request, body: AnalyzeRequest):
 
 
 @app.get("/api/v1/graphs", response_model=GraphsResponse)
-async def get_graphs(repo_path: str | None = None):
+async def get_graphs(repo_path: str | None = None, current_user=Depends(require_auth)):
     """Get list of stored graphs."""
-    graphs = storage.list_graphs(repo_path)
-    return GraphsResponse(graphs=graphs)
+    all_graphs = storage.list_graphs(repo_path)
+    # Filter graphs by user ownership
+    user_graphs = [g for g in all_graphs if g.user_id == current_user.id]
+    return GraphsResponse(graphs=user_graphs)
 
 
 @app.get("/api/v1/graph/{graph_id}", response_model=GraphResponse)
@@ -1463,7 +1477,8 @@ async def get_graph(
     graph_id: str,
     include_code: bool = False,
     node_types: str | None = None,
-    edge_types: str | None = None
+    edge_types: str | None = None,
+    current_user=Depends(require_auth)
 ):
     """
     Retrieve a complete dependency graph.
@@ -1476,6 +1491,10 @@ async def get_graph(
     graph = storage.load_graph(graph_id)
     if not graph:
         raise HTTPException(status_code=404, detail="Graph not found")
+
+    # Check repository ownership
+    if graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
 
     # Apply node type filtering
     filtered_nodes = graph.nodes
@@ -1511,11 +1530,15 @@ async def get_graph(
 
 
 @app.get("/api/v1/graph/{graph_id}/node/{node_id}", response_model=NodeResponse)
-async def get_node(graph_id: str, node_id: str, include_code: bool = False):
+async def get_node(graph_id: str, node_id: str, include_code: bool = False, current_user=Depends(require_auth)):
     """Get information about a specific node."""
     graph = storage.load_graph(graph_id)
     if not graph:
         raise HTTPException(status_code=404, detail="Graph not found")
+
+    # Check repository ownership
+    if graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
 
     # Find the node
     node = next((n for n in graph.nodes if n.id == node_id), None)
@@ -1627,7 +1650,8 @@ async def get_dependencies(
     node_id: str,
     depth: int = 2,
     direction: str = "both",
-    edge_types: str | None = None
+    edge_types: str | None = None,
+    current_user=Depends(require_auth)
 ):
     """Get dependencies for a node with traversal options."""
     if depth < 1 or depth > 5:
@@ -1639,6 +1663,10 @@ async def get_dependencies(
     graph = storage.load_graph(graph_id)
     if not graph:
         raise HTTPException(status_code=404, detail="Graph not found")
+
+    # Check repository ownership
+    if graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
 
     # Check if node exists
     if not any(n.id == node_id for n in graph.nodes):
@@ -1672,8 +1700,8 @@ async def get_dependencies(
 
 
 @app.post("/api/v1/context", response_model=SmartContextResponse)
-@limiter.limit(lambda: get_rate_limit(get_current_user()))
-async def get_smart_context(request: Request, body: SmartContextRequest, current_user=Depends(get_current_user)):
+@limiter.limit("30/minute")
+async def get_smart_context(request: Request, body: SmartContextRequest, current_user=Depends(require_auth)):
     """
     Smart Context API - Unified endpoint for optimal context selection.
 
@@ -1700,6 +1728,10 @@ async def get_smart_context(request: Request, body: SmartContextRequest, current
         graph = storage.load_graph(body.repo_id)
         if not graph:
             raise HTTPException(status_code=404, detail=f"Repository '{body.repo_id}' not found")
+
+        # Check repository ownership
+        if graph.repository.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
 
         # Step 1: Semantic search
         embedding_service = EmbeddingService()
@@ -1826,7 +1858,7 @@ async def get_smart_context(request: Request, body: SmartContextRequest, current
 
 @app.post("/api/v1/token-context", response_model=TokenBudgetedContextResponse)
 @limiter.limit("30/minute")
-async def get_token_budgeted_context(request: Request, body: TokenBudgetedContextRequest):
+async def get_token_budgeted_context(request: Request, body: TokenBudgetedContextRequest, current_user=Depends(require_auth)):
     """
     Get token-budgeted context for a task.
 
@@ -1853,6 +1885,10 @@ async def get_token_budgeted_context(request: Request, body: TokenBudgetedContex
         graph = storage.load_graph(body.repo_id)
         if not graph:
             raise HTTPException(status_code=404, detail=f"Repository '{body.repo_id}' not found")
+
+        # Check repository ownership
+        if graph.repository.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
 
         # Validate entry points exist
         for entry_point in body.entry_points:
@@ -1966,7 +2002,7 @@ async def get_token_budgeted_context(request: Request, body: TokenBudgetedContex
 
 
 @app.get("/api/v1/graph/{graph_id}/impact", response_model=ImpactResponse)
-async def get_impact_analysis(graph_id: str, files: str):
+async def get_impact_analysis(graph_id: str, files: str, current_user=Depends(require_auth)):
     """Analyze impact of changes to specified files."""
     # Parse changed files
     changed_files = [f.strip() for f in files.split(",") if f.strip()]
@@ -1978,6 +2014,10 @@ async def get_impact_analysis(graph_id: str, files: str):
     graph = storage.load_graph(graph_id)
     if not graph:
         raise HTTPException(status_code=404, detail="Graph not found")
+
+    # Check repository ownership
+    if graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
 
     # Validate changed files exist in graph
     graph_file_paths = {node.path for node in graph.nodes if node.type == "file"}
@@ -2125,8 +2165,13 @@ async def get_capabilities():
 
 
 @app.delete("/api/v1/graph/{graph_id}", response_model=DeleteGraphResponse)
-async def delete_graph(graph_id: str):
+async def delete_graph(graph_id: str, current_user=Depends(require_auth)):
     """Delete a graph from storage."""
+    # Check repository ownership before deletion
+    graph = storage.load_graph(graph_id)
+    if graph and graph.repository.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
     deleted = storage.delete_graph(graph_id)
 
     if not deleted:
@@ -2137,7 +2182,7 @@ async def delete_graph(graph_id: str):
 
 @app.post("/api/v1/search", response_model=SearchResponse)
 @limiter.limit("30/minute")
-async def search_code(request: Request, body: SearchRequest):
+async def search_code(request: Request, body: SearchRequest, current_user=Depends(require_auth)):
     """
     Search for code using semantic, graph, or hybrid search.
 
@@ -2164,6 +2209,11 @@ async def search_code(request: Request, body: SearchRequest):
             results = []
 
             if body.mode == "semantic":
+                # Check repository ownership for semantic search
+                graph = storage.load_graph(body.repo_id)
+                if not graph or graph.repository.user_id != current_user.id:
+                    raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
                 # Semantic search
                 search_results = await semantic_search.search(
                     repo_id=body.repo_id,
@@ -2192,6 +2242,10 @@ async def search_code(request: Request, body: SearchRequest):
                 if not graph:
                     raise HTTPException(status_code=404, detail="Repository graph not found")
 
+                # Check repository ownership
+                if graph.repository.user_id != current_user.id:
+                    raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
                 # Simple text-based search in graph nodes
                 query_lower = body.query.lower()
                 matching_nodes = []
@@ -2219,6 +2273,11 @@ async def search_code(request: Request, body: SearchRequest):
                     ))
 
             elif body.mode == "hybrid":
+                # Check repository ownership for hybrid search
+                graph = storage.load_graph(body.repo_id)
+                if not graph or graph.repository.user_id != current_user.id:
+                    raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
                 # Hybrid search
                 ranked_nodes = await hybrid_search.search(
                     repo_id=body.repo_id,

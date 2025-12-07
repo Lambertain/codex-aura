@@ -16,10 +16,12 @@ class Repository(BaseModel):
     Attributes:
         path: Absolute path to the repository root.
         name: Name of the repository (basename of the path).
+        user_id: ID of the user who owns this repository.
     """
 
     path: str
     name: str
+    user_id: str
 
 
 class Stats(BaseModel):

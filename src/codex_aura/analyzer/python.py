@@ -33,7 +33,7 @@ class PythonAnalyzer(BaseAnalyzer):
         """
         self.verbose = verbose
 
-    def analyze(self, repo_path: Path) -> Graph:
+    def analyze(self, repo_path: Path, user_id: str = None) -> Graph:
         """Perform complete analysis of a Python repository.
 
         Analyzes all Python files in the repository, extracts code structure
@@ -112,7 +112,7 @@ class PythonAnalyzer(BaseAnalyzer):
         )
         logger.info(f"Graph contains {len(nodes)} nodes and {len(valid_edges)} edges")
 
-        repository = Repository(path=str(repo_path), name=repo_path.name)
+        repository = Repository(path=str(repo_path), name=repo_path.name, user_id=user_id)
 
         return Graph(
             version="0.1",

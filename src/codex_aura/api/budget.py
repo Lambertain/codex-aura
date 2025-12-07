@@ -9,6 +9,7 @@ from ..token_budget.presets import get_preset
 from ..models.node import RankedNode
 from ..budgeting.analytics import BudgetAnalyticsService
 from ..token_budget.counter import ModelName
+from .middleware.auth import get_current_user
 
 # Create router
 router = APIRouter()
@@ -68,10 +69,6 @@ def get_analytics() -> BudgetAnalyticsService:
     return BudgetAnalyticsService()
 
 
-def get_current_user() -> User:
-    """Get current user (mock implementation)."""
-    # In production, this would come from authentication middleware
-    return User(id="user_123", username="test_user", email="test@example.com")
 
 
 @router.post("/api/v1/budget/allocate")
