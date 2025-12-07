@@ -13,7 +13,10 @@ from neo4j.exceptions import ServiceUnavailable
 
 from ..models.graph import Graph
 from ..models.node import Node
-from ..sync.incremental import GraphTransaction
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..sync.incremental import GraphTransaction
 
 
 class Neo4jClient:
@@ -318,6 +321,19 @@ class GraphQueries:
 
         self._cache[cache_key] = nodes
         return nodes
+
+    async def get_dependencies_weighted(
+        self,
+        fqn: str,
+        edge_weights: Dict[str, float],
+        weight_threshold: float = 0.1
+    ) -> List[Node]:
+        """
+        Get dependencies using weighted expansion.
+
+        Delegates to client method for weighted expansion algorithm.
+        """
+        return await self.client.get_dependencies_weighted(fqn, edge_weights, weight_threshold)
 
     async def get_dependents(self, fqn: str, depth: int = 2) -> List[Node]:
         """

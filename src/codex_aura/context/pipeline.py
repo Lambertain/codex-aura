@@ -8,6 +8,7 @@ summarization, and final formatting into a single black-box pipeline.
 import time
 import logging
 from typing import List, Optional, Dict, Any
+from dataclasses import field
 from dataclasses import dataclass
 
 from ..models.node import Node, RankedNode
@@ -36,7 +37,13 @@ class PipelineConfig:
     semantic_threshold: float = 0.7
 
     # Graph expansion
-    graph_depth: int = 2
+    graph_depth: int = 2  # Legacy depth-based expansion
+    graph_weight_threshold: float = 0.1  # Stop expansion when cumulative weight < threshold
+    edge_weights: Dict[str, float] = field(default_factory=lambda: {
+        "CALLS": 0.9,
+        "IMPORTS": 0.6,
+        "EXTENDS": 1.0
+    })  # Edge type weights for weighted expansion
 
     # Ranking weights
     semantic_weight: float = 0.4
@@ -255,7 +262,7 @@ class UnifiedContextPipeline:
         return results
 
     async def _graph_expansion(self, repo_id: str, entry_points: List[str]) -> List[Node]:
-        """Stage 2: Expand from entry points using dependency graph."""
+        """Stage 2: Expand from entry points using dependency graph with weighted expansion."""
         if not entry_points:
             # If no entry points, get some default nodes (e.g., main files)
             entry_points = await self._get_default_entry_points(repo_id)
@@ -267,12 +274,15 @@ class UnifiedContextPipeline:
             resolved_fqns = await self._resolve_entry_point(repo_id, entry_point)
 
             for fqn in resolved_fqns:
-                # Get dependencies (breadth-first)
-                deps = await self.graph.get_dependencies(repo_id, fqn, self.config.graph_depth)
-                for dep_fqn, _ in deps:
-                    node = await self.graph.get_node(repo_id, dep_fqn)
-                    if node:
-                        all_nodes.add(node)
+                # Get dependencies using weighted expansion
+                deps = await self.graph.get_dependencies_weighted(
+                    repo_id,
+                    fqn,
+                    self.config.edge_weights,
+                    self.config.graph_weight_threshold
+                )
+                for node in deps:
+                    all_nodes.add(node)
 
                 # Get the entry node itself
                 entry_node = await self.graph.get_node(repo_id, fqn)

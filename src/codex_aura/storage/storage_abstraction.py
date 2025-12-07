@@ -3,7 +3,8 @@
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict
+from contextlib import asynccontextmanager
 
 from ..models.graph import Graph
 from ..models.node import Node
@@ -62,6 +63,40 @@ class GraphStorage(ABC):
             List of dependent nodes
         """
         pass
+
+    @abstractmethod
+    async def query_dependencies_weighted(
+        self,
+        fqn: str,
+        edge_weights: Dict[str, float],
+        weight_threshold: float = 0.1
+    ) -> List[Node]:
+        """
+        Query dependencies using weighted expansion.
+
+        Args:
+            fqn: Fully qualified name of the node
+            edge_weights: Dictionary mapping edge types to weights
+            weight_threshold: Stop expansion when edge weight < threshold
+
+        Returns:
+            List of dependent nodes ordered by cumulative weight
+        """
+        pass
+
+    async def get_dependencies_weighted(
+        self,
+        repo_id: str,
+        fqn: str,
+        edge_weights: Dict[str, float],
+        weight_threshold: float = 0.1
+    ) -> List[Node]:
+        """
+        Get dependencies using weighted expansion for a specific repo.
+
+        This is a convenience method that calls query_dependencies_weighted.
+        """
+        return await self.query_dependencies_weighted(fqn, edge_weights, weight_threshold)
 
     @abstractmethod
     async def get_all_nodes(self, repo_id: str) -> List[Node]:
@@ -191,6 +226,16 @@ class SQLiteStorageBackend(GraphStorage):
 
         return nodes
 
+    async def query_dependencies_weighted(
+        self,
+        fqn: str,
+        edge_weights: Dict[str, float],
+        weight_threshold: float = 0.1
+    ) -> List[Node]:
+        """Query dependencies using weighted expansion - not implemented for SQLite."""
+        # For now, fall back to depth-based expansion
+        return await self.query_dependencies(fqn, depth=2)
+
     async def get_all_nodes(self, repo_id: str) -> List[Node]:
         """Get all nodes for a repository from SQLite storage."""
         graphs = self.storage.list_graphs()
@@ -252,6 +297,15 @@ class Neo4jStorageBackend(GraphStorage):
     async def query_dependencies(self, fqn: str, depth: int = 2) -> List[Node]:
         """Query dependencies from Neo4j storage."""
         return await self.queries.get_dependencies(fqn, depth)
+
+    async def query_dependencies_weighted(
+        self,
+        fqn: str,
+        edge_weights: Dict[str, float],
+        weight_threshold: float = 0.1
+    ) -> List[Node]:
+        """Query dependencies using weighted expansion from Neo4j storage."""
+        return await self.queries.get_dependencies_weighted(fqn, edge_weights, weight_threshold)
 
     async def get_all_nodes(self, repo_id: str) -> List[Node]:
         """Get all nodes for a repository from Neo4j storage."""
@@ -329,6 +383,16 @@ class PostgresStorageBackend(GraphStorage):
     async def query_dependencies(self, fqn: str, depth: int = 2) -> List[Node]:
         """Query dependencies from PostgreSQL storage."""
         # This would require implementing graph traversal logic
+        # For now, return empty list
+        return []
+
+    async def query_dependencies_weighted(
+        self,
+        fqn: str,
+        edge_weights: Dict[str, float],
+        weight_threshold: float = 0.1
+    ) -> List[Node]:
+        """Query dependencies using weighted expansion - not implemented for PostgreSQL."""
         # For now, return empty list
         return []
 
