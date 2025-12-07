@@ -11,9 +11,11 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
 from ..models.node import Node, RankedNode
+from ..models.usage import UsageEvent
 from ..search.vector_store import SemanticSearch, SearchResult
 from ..search.embeddings import EmbeddingService
 from ..storage.storage_abstraction import get_storage
+from ..storage.usage_storage import UsageStorage
 from ..context.ranking import SemanticRankingEngine, RankedContextNode
 from ..token_budget.allocator import BudgetAllocator
 from ..token_budget.counter import TokenCounter
@@ -190,6 +192,24 @@ class UnifiedContextPipeline:
 
             logger.info(f"Pipeline completed in {generation_time}ms")
 
+            # Log usage event (async, don't wait)
+            try:
+                usage_storage = UsageStorage()
+                await usage_storage.insert_usage_event(UsageEvent(
+                    user_id="system",  # TODO: get from context when available
+                    event_type="context_request",
+                    endpoint="context_pipeline",
+                    tokens_used=allocation_stats.total_tokens,
+                    metadata={
+                        "repo_id": repo_id,
+                        "task_length": len(task),
+                        "nodes_selected": len(summarized_nodes),
+                        "generation_time_ms": generation_time
+                    }
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to log usage: {e}")
+
             return ContextResponse(
                 context=formatted_context,
                 nodes=node_summaries,
@@ -213,6 +233,24 @@ class UnifiedContextPipeline:
             limit=self.config.semantic_limit,
             score_threshold=self.config.semantic_threshold
         )
+
+        # Log semantic search usage
+        try:
+            usage_storage = UsageStorage()
+            await usage_storage.insert_usage_event(UsageEvent(
+                user_id="system",  # TODO: get from context
+                event_type="semantic_search",
+                endpoint="semantic_search",
+                tokens_used=None,  # Semantic search doesn't consume user tokens directly
+                metadata={
+                    "repo_id": repo_id,
+                    "query_length": len(task),
+                    "results_count": len(results),
+                    "avg_score": sum(r.score for r in results) / len(results) if results else 0
+                }
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to log semantic search usage: {e}")
 
         return results
 

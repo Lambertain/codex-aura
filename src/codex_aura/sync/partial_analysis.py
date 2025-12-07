@@ -1,10 +1,15 @@
 import ast
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 from ..analyzer.base import BaseAnalyzer
 from ..models.node import Node
+from ..models.usage import UsageEvent
+from ..storage.usage_storage import UsageStorage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,6 +87,25 @@ class PartialAnalyzer:
         for fqn in old_nodes_map:
             if fqn not in new_nodes_map:
                 result.deleted_nodes.append(old_nodes_map[fqn])
+
+        # Log sync event
+        try:
+            usage_storage = UsageStorage()
+            await usage_storage.insert_usage_event(UsageEvent(
+                user_id="system",  # TODO: get from context
+                event_type="sync_event",
+                endpoint="partial_analysis",
+                tokens_used=None,
+                metadata={
+                    "file_path": str(file_path),
+                    "changed_lines_count": len(changed_lines),
+                    "updated_nodes": len(result.updated_nodes),
+                    "deleted_nodes": len(result.deleted_nodes),
+                    "unchanged_nodes": len(result.unchanged_nodes)
+                }
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to log sync event: {e}")
 
         return result
 

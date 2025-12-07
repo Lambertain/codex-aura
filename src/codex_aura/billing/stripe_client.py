@@ -61,3 +61,16 @@ class StripeClient:
             subscription_id,
             cancel_at_period_end=True
         )
+
+    async def get_customer_by_id(self, customer_id: str) -> dict:
+        """Get customer details."""
+        return stripe.Customer.retrieve(customer_id)
+
+    async def get_subscription_by_customer(self, customer_id: str) -> Optional[dict]:
+        """Get active subscription for customer."""
+        subscriptions = stripe.Subscription.list(customer=customer_id, status="active")
+        return subscriptions.data[0] if subscriptions.data else None
+
+    async def construct_event(self, payload: bytes, sig_header: str, endpoint_secret: str) -> stripe.Event:
+        """Construct Stripe event from webhook payload."""
+        return stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)

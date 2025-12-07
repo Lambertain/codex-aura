@@ -34,6 +34,7 @@ from ..budgeting.analytics import BudgetAnalyticsService
 from ..context import SemanticRankingEngine, rank_context
 from ..api.budget import router as budget_router
 from ..api.billing import router as billing_router
+from ..api.usage import router as usage_router
 from ..api.middleware.rate_limit import get_rate_limit
 from ..api.middleware.quota import QuotaEnforcementMiddleware
 from ..api.middleware.auth import require_auth, optional_auth
@@ -199,6 +200,7 @@ instrument_app(app)
 # Include API routers
 app.include_router(budget_router, prefix="/api/v1", tags=["budget"])
 app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
+app.include_router(usage_router, prefix="/api/v1", tags=["usage"])
 
 # Mount static files
 import os
