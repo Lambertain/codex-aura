@@ -12,6 +12,7 @@ class EdgeType(str, Enum):
     IMPORTS = "IMPORTS"
     CALLS = "CALLS"
     EXTENDS = "EXTENDS"
+    SERVICE_CALLS = "SERVICE_CALLS"  # Межсервисные вызовы
 
     @classmethod
     def _missing_(cls, value):

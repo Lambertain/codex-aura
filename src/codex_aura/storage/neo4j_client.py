@@ -389,3 +389,43 @@ class GraphQueries:
     def clear_cache(self):
         """Clear the query cache."""
         self._cache.clear()
+
+    async def save_dependency_graph(self, graph: Graph) -> str:
+        """
+        Save dependency graph with service relationships to Neo4j.
+
+        Args:
+            graph: Graph containing service nodes and SERVICE_CALLS edges.
+
+        Returns:
+            Graph ID in Neo4j.
+        """
+        graph_id = f"dependency_graph_{graph.sha or 'latest'}"
+
+        async with self.session() as session:
+            # Create service nodes
+            for node in graph.nodes:
+                if node.type == "service":
+                    await session.run("""
+                        MERGE (s:Service {name: $name})
+                        SET s.path = $path,
+                            s.repo_id = $repo_id,
+                            s.graph_id = $graph_id
+                    """, name=node.name, path=node.path, repo_id=node.name, graph_id=graph_id)
+
+            # Create dependency relationships
+            for edge in graph.edges:
+                if edge.type == "SERVICE_CALLS":
+                    source_name = edge.source.replace("service_", "")
+                    target_name = edge.target.replace("service_", "")
+
+                    await session.run("""
+                        MATCH (source:Service {name: $source_name}),
+                              (target:Service {name: $target_name})
+                        MERGE (source)-[r:SERVICE_CALLS]->(target)
+                        SET r.line = $line,
+                            r.graph_id = $graph_id
+                    """, source_name=source_name, target_name=target_name,
+                         line=edge.line, graph_id=graph_id)
+
+        return graph_id

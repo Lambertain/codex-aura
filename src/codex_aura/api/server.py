@@ -36,6 +36,7 @@ from ..api.budget import router as budget_router
 from ..api.billing import router as billing_router
 from ..api.usage import router as usage_router
 from ..api.api_keys import router as api_keys_router
+from ..api.dependencies import router as dependencies_router
 from ..api.middleware.rate_limit import get_rate_limit
 from ..api.middleware.quota import QuotaEnforcementMiddleware
 from ..api.middleware.auth import require_auth, optional_auth
@@ -238,6 +239,7 @@ app.include_router(budget_router, prefix="/api/v1", tags=["budget"])
 app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
 app.include_router(usage_router, prefix="/api/v1", tags=["usage"])
 app.include_router(api_keys_router, prefix="/api/v1", tags=["api-keys"])
+app.include_router(dependencies_router, prefix="/api/v1", tags=["dependencies"])
 
 # Mount static files
 import os
