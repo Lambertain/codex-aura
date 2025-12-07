@@ -6,6 +6,7 @@ from .embeddings import (
     RankedNode
 )
 from .vector_store import VectorStore, SemanticSearch, HybridSearch
+from .clustering import NodeCluster, NodeClustering, cluster_nodes
 
 __all__ = [
     "CodeChunk",
@@ -15,5 +16,8 @@ __all__ = [
     "RankedNode",
     "VectorStore",
     "SemanticSearch",
-    "HybridSearch"
+    "HybridSearch",
+    "NodeCluster",
+    "NodeClustering",
+    "cluster_nodes"
 ]

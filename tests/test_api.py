@@ -233,3 +233,136 @@ def test_capabilities_endpoint():
         assert data["impact_plugin"]["name"] == "basic"
         assert data["impact_plugin"]["version"] == "1.0.0"
         assert "capabilities" in data["impact_plugin"]
+
+
+def test_cluster_request_model():
+    """Test ClusterRequest model validation."""
+    from codex_aura.api.server import ClusterRequest
+    from pydantic import ValidationError
+    import pytest
+
+    # Valid request
+    request = ClusterRequest(
+        repo_id="repo_abc123",
+        k=8,
+        algorithm="kmeans"
+    )
+    assert request.repo_id == "repo_abc123"
+    assert request.k == 8
+    assert request.algorithm == "kmeans"
+
+    # Valid hdbscan
+    request = ClusterRequest(
+        repo_id="repo_abc123",
+        k=5,
+        algorithm="hdbscan"
+    )
+    assert request.algorithm == "hdbscan"
+
+    # Invalid k (too low)
+    with pytest.raises(ValidationError):
+        ClusterRequest(
+            repo_id="repo_abc123",
+            k=1  # < 2
+        )
+
+    # Invalid k (too high)
+    with pytest.raises(ValidationError):
+        ClusterRequest(
+            repo_id="repo_abc123",
+            k=25  # > 20
+        )
+
+    # Invalid algorithm
+    with pytest.raises(ValidationError):
+        ClusterRequest(
+            repo_id="repo_abc123",
+            algorithm="invalid"
+        )
+
+
+@pytest.mark.asyncio
+async def test_cluster_nodes_function():
+    """Test the cluster_nodes function directly."""
+    from codex_aura.search import cluster_nodes, EmbeddingService
+    from codex_aura.models.node import Node
+
+    # Create test nodes
+    nodes = [
+        Node(id="auth.py", type="file", name="auth.py", path="auth.py", content="Authentication module"),
+        Node(id="user.py", type="file", name="user.py", path="user.py", content="User management module"),
+        Node(id="order.py", type="file", name="order.py", path="order.py", content="Order processing module"),
+        Node(id="payment.py", type="file", name="payment.py", path="payment.py", content="Payment handling module"),
+        Node(id="email.py", type="file", name="email.py", path="email.py", content="Email service module"),
+        Node(id="db.py", type="file", name="db.py", path="db.py", content="Database utilities"),
+    ]
+
+    # Test clustering with k-means
+    embedding_service = EmbeddingService()
+    clusters = await cluster_nodes(
+        nodes=nodes,
+        k=3,
+        algorithm="kmeans",
+        embedding_service=embedding_service
+    )
+
+    # Should return 3 clusters
+    assert len(clusters) == 3
+
+    # Each cluster should have nodes
+    total_nodes_in_clusters = sum(len(cluster.nodes) for cluster in clusters)
+    assert total_nodes_in_clusters == len(nodes)
+
+    # Each cluster should have a label
+    for cluster in clusters:
+        assert cluster.label is not None
+        assert len(cluster.label) > 0
+
+    # Test clustering with hdbscan
+    clusters_hdbscan = await cluster_nodes(
+        nodes=nodes,
+        k=3,  # k parameter is ignored for hdbscan but kept for compatibility
+        algorithm="hdbscan",
+        embedding_service=embedding_service
+    )
+
+    # HDBSCAN might find different number of clusters
+    assert len(clusters_hdbscan) >= 1
+
+    # Should still have all nodes
+    total_nodes_hdbscan = sum(len(cluster.nodes) for cluster in clusters_hdbscan)
+    assert total_nodes_hdbscan == len(nodes)
+
+
+def test_cluster_response_model():
+    """Test ClusterResponse model."""
+    from codex_aura.api.server import ClusterResponse
+
+    cluster_data = [
+        {
+            "cluster_id": 0,
+            "label": "Authentication cluster",
+            "size": 2,
+            "nodes": ["auth.py", "user.py"],
+            "centroid": [0.1, 0.2, 0.3]
+        },
+        {
+            "cluster_id": 1,
+            "label": "Business logic cluster",
+            "size": 3,
+            "nodes": ["order.py", "payment.py", "email.py"],
+            "centroid": [0.4, 0.5, 0.6]
+        }
+    ]
+
+    response = ClusterResponse(
+        clusters=cluster_data,
+        total_nodes=5,
+        algorithm="kmeans",
+        k=2
+    )
+
+    assert response.total_nodes == 5
+    assert response.algorithm == "kmeans"
+    assert response.k == 2
+    assert len(response.clusters) == 2

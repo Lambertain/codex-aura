@@ -616,6 +616,31 @@ class SearchResponse(BaseModel):
     search_mode: str
 
 
+class ClusterRequest(BaseModel):
+    """Request model for clustering endpoint."""
+
+    repo_id: str
+    k: int = Field(8, ge=2, le=20)
+    algorithm: str = Field("kmeans", pattern="^(kmeans|hdbscan)$")
+
+    @field_validator("k")
+    @classmethod
+    def validate_k(cls, v: int) -> int:
+        """Validate k is between 2 and 20."""
+        if v < 2 or v > 20:
+            raise ValueError("k must be between 2 and 20")
+        return v
+
+
+class ClusterResponse(BaseModel):
+    """Response model for clustering endpoint."""
+
+    clusters: list[dict]
+    total_nodes: int
+    algorithm: str
+    k: int
+
+
 class SnapshotResponse(BaseModel):
     """Response model for snapshot retrieval endpoint."""
 
@@ -2508,6 +2533,92 @@ async def search_code(request: Request, body: SearchRequest, current_user=Depend
                 error=str(e)
             )
             raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.post("/api/v1/cluster", response_model=ClusterResponse)
+@limiter.limit("10/minute")
+async def cluster_nodes(request: Request, body: ClusterRequest, current_user=Depends(require_auth)):
+    """
+    Cluster nodes using embeddings.
+
+    Performs clustering analysis on repository nodes using semantic embeddings.
+    Supports both K-means and HDBSCAN algorithms for grouping related code elements.
+
+    Returns cluster assignments with descriptive labels for each cluster.
+    """
+    with tracer.start_as_current_span("cluster_nodes") as span:
+        span.set_attribute("repo_id", body.repo_id)
+        span.set_attribute("k", body.k)
+        span.set_attribute("algorithm", body.algorithm)
+
+        try:
+            # Load graph by repo_id
+            graph = storage.load_graph(body.repo_id)
+            if not graph:
+                raise HTTPException(status_code=404, detail=f"Repository '{body.repo_id}' not found")
+
+            # Check repository ownership
+            if graph.repository.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
+            # Get nodes for clustering
+            nodes = graph.nodes
+
+            if len(nodes) < body.k:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Repository has {len(nodes)} nodes, but k={body.k} clusters requested. Reduce k or add more nodes."
+                )
+
+            # Perform clustering
+            from ..search import cluster_nodes as cluster_func, EmbeddingService
+            embedding_service = EmbeddingService()
+            clusters = await cluster_func(
+                nodes=nodes,
+                k=body.k,
+                algorithm=body.algorithm,
+                embedding_service=embedding_service
+            )
+
+            # Convert clusters to response format
+            cluster_data = []
+            for cluster in clusters:
+                cluster_data.append(cluster.to_dict())
+
+            # Update metrics
+            CONTEXT_REQUESTS_TOTAL.inc()
+
+            span.set_attribute("nodes_clustered", len(nodes))
+            span.set_attribute("clusters_found", len(clusters))
+
+            logger.info(
+                "clustering_completed",
+                repo_id=body.repo_id,
+                algorithm=body.algorithm,
+                k=body.k,
+                nodes_clustered=len(nodes),
+                clusters_found=len(clusters)
+            )
+
+            return ClusterResponse(
+                clusters=cluster_data,
+                total_nodes=len(nodes),
+                algorithm=body.algorithm,
+                k=body.k
+            )
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+
+            logger.error(
+                "clustering_failed",
+                repo_id=body.repo_id,
+                algorithm=body.algorithm,
+                k=body.k,
+                error=str(e)
+            )
+            raise HTTPException(status_code=500, detail=f"Clustering failed: {str(e)}")
 
 
 @app.get("/api/v1/repos/{repo_id}/graph/{sha}", response_model=SnapshotResponse)
