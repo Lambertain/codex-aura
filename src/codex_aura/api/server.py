@@ -45,6 +45,7 @@ from ..webhooks.github import verify_github_signature, extract_github_event, nor
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
 from ..sync.status import SyncStatusTracker, SyncJob, init_sync_status_table
 from ..storage.postgres_snapshots import PostgresSnapshotStorage
+from ..graph_diff import calculate_graph_diff
 from collections import deque
 
 # Configure structured logging
@@ -610,6 +611,17 @@ class SnapshotResponse(BaseModel):
     nodes: list[dict]
     edges: list[dict]
     stats: dict
+
+
+class GraphDiffResponse(BaseModel):
+    """Response model for graph diff endpoint."""
+
+    added_nodes: list[dict]
+    removed_nodes: list[dict]
+    changed_nodes: list[dict]
+    added_edges: list[dict]
+    removed_edges: list[dict]
+    duration_ms: int
 
 
 @app.get("/health")
@@ -2456,6 +2468,78 @@ async def get_snapshot_graph(repo_id: str, sha: str, current_user=Depends(requir
         )
 
         return response
+
+
+@app.get("/api/v1/repos/{repo_id}/graph-diff", response_model=GraphDiffResponse)
+@limiter.limit("60/minute")
+async def get_graph_diff(
+    repo_id: str,
+    sha_old: str,
+    sha_new: str,
+    current_user=Depends(require_auth)
+):
+    """
+    Calculate diff between two graph snapshots for a repository.
+
+    Returns the differences between two commits' graphs including:
+    - Added/removed/changed nodes
+    - Added/removed edges
+    - Performance optimized for < 1 second execution
+    """
+    with tracer.start_as_current_span("get_graph_diff") as span:
+        span.set_attribute("repo_id", repo_id)
+        span.set_attribute("sha_old", sha_old)
+        span.set_attribute("sha_new", sha_new)
+
+        start_time = time.time()
+
+        # Check repository ownership (assuming repo_id maps to graph_id for now)
+        # In practice, you might need to resolve repo_id to graph_id
+        graph_old = storage.load_graph(f"g_{sha_old[:12]}")
+        graph_new = storage.load_graph(f"g_{sha_new[:12]}")
+
+        if not graph_old or not graph_new:
+            raise HTTPException(status_code=404, detail="One or both graph snapshots not found")
+
+        # Check ownership
+        if (graph_old.repository.user_id != current_user.id or
+            graph_new.repository.user_id != current_user.id):
+            raise HTTPException(status_code=403, detail="Access denied: repository not found or not owned by user")
+
+        # Calculate diff
+        diff_result = calculate_graph_diff(graph_old, graph_new)
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Update metrics
+        CONTEXT_REQUESTS_TOTAL.inc()
+
+        span.set_attribute("duration_ms", duration_ms)
+        span.set_attribute("added_nodes", len(diff_result["added_nodes"]))
+        span.set_attribute("removed_nodes", len(diff_result["removed_nodes"]))
+        span.set_attribute("changed_nodes", len(diff_result["changed_nodes"]))
+
+        logger.info(
+            "graph_diff_calculated",
+            repo_id=repo_id,
+            sha_old=sha_old,
+            sha_new=sha_new,
+            added_nodes=len(diff_result["added_nodes"]),
+            removed_nodes=len(diff_result["removed_nodes"]),
+            changed_nodes=len(diff_result["changed_nodes"]),
+            added_edges=len(diff_result["added_edges"]),
+            removed_edges=len(diff_result["removed_edges"]),
+            duration_ms=duration_ms
+        )
+
+        return GraphDiffResponse(
+            added_nodes=diff_result["added_nodes"],
+            removed_nodes=diff_result["removed_nodes"],
+            changed_nodes=diff_result["changed_nodes"],
+            added_edges=diff_result["added_edges"],
+            removed_edges=diff_result["removed_edges"],
+            duration_ms=duration_ms
+        )
 
 
 def _matches_filters(chunk: dict, filters: dict) -> bool:
