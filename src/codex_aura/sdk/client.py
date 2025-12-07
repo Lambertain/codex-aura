@@ -16,6 +16,7 @@ from ..models.graph import Graph
 from .context import Context, ContextNode
 from .impact import ImpactAnalysis, AffectedFile
 from .exceptions import CodexAuraError, ConnectionError, AnalysisError, ValidationError, TimeoutError
+from ..impact_engine import ImpactEngine
 
 
 class CodexAura:
@@ -366,6 +367,38 @@ class CodexAura:
                 } for f in affected_files],
                 affected_tests=affected_tests
             )
+
+    def predict_impact(self, file_path: str, repo_id: str) -> List[str]:
+        """Predict files impacted by changes to a file using rule-based analysis.
+
+        This is a rule-based, non-ML impact analysis that analyzes Python code directly
+        using AST parsing to determine dependencies.
+
+        Args:
+            file_path: Path to the changed file (relative to repo root)
+            repo_id: Repository identifier (used for repo path resolution)
+
+        Returns:
+            Sorted list of impacted file paths
+
+        Raises:
+            ValidationError: If repo_path not configured for local mode
+            AnalysisError: If impact prediction fails
+        """
+        if self.server_url:
+            # For remote mode, we could call a server endpoint
+            # For now, raise error as this is designed for local analysis
+            raise ValidationError("Rule-based impact prediction is only available in local mode")
+
+        if not self.repo_path:
+            raise ValidationError("repo_path required for rule-based impact prediction")
+
+        try:
+            engine = ImpactEngine(str(self.repo_path))
+            impacted_files = engine.predict(file_path, repo_id)
+            return impacted_files
+        except Exception as e:
+            raise AnalysisError(f"Impact prediction failed: {str(e)}")
 
     def list_graphs(self) -> List[Dict[str, Any]]:
         """List available graphs.
