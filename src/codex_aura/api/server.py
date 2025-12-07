@@ -44,6 +44,7 @@ from ..webhooks import WebhookQueue, WebhookProcessor, set_webhook_processor
 from ..webhooks.github import verify_github_signature, extract_github_event, normalize_github_event
 from ..webhooks.gitlab import verify_gitlab_signature, extract_gitlab_event, normalize_gitlab_event
 from ..sync.status import SyncStatusTracker, SyncJob, init_sync_status_table
+from ..storage.postgres_snapshots import PostgresSnapshotStorage
 from collections import deque
 
 # Configure structured logging
@@ -600,6 +601,15 @@ class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     total: int
     search_mode: str
+
+
+class SnapshotResponse(BaseModel):
+    """Response model for snapshot retrieval endpoint."""
+
+    sha: str
+    nodes: list[dict]
+    edges: list[dict]
+    stats: dict
 
 
 @app.get("/health")
@@ -2377,6 +2387,75 @@ async def search_code(request: Request, body: SearchRequest, current_user=Depend
                 error=str(e)
             )
             raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.get("/api/v1/repos/{repo_id}/graph/{sha}", response_model=SnapshotResponse)
+@limiter.limit("60/minute")
+async def get_snapshot_graph(repo_id: str, sha: str, current_user=Depends(require_auth)):
+    """
+    Retrieve a graph snapshot for a specific repository SHA.
+
+    Returns the complete graph data (nodes and edges) for the specified commit SHA.
+    Supports caching for fast retrieval and returns 404 if SHA not found.
+
+    This endpoint is optimized for Dashboard compatibility and provides
+    fast access to historical graph states.
+    """
+    with tracer.start_as_current_span("get_snapshot_graph") as span:
+        span.set_attribute("repo_id", repo_id)
+        span.set_attribute("sha", sha)
+
+        # Check cache first
+        cache_key = f"snapshot:{repo_id}:{sha}"
+        cached_data = await redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"Cache hit for snapshot {repo_id}:{sha}")
+            cached_response = SnapshotResponse.model_validate_json(cached_data)
+            return cached_response
+
+        # Initialize snapshot storage
+        snapshot_storage = PostgresSnapshotStorage()
+
+        # Get snapshot metadata
+        snapshot = await snapshot_storage.get_snapshot_for_sha(repo_id, sha)
+        if not snapshot:
+            logger.warning(f"Snapshot not found for repo {repo_id}, SHA {sha}")
+            raise HTTPException(status_code=404, detail="Snapshot not found for the specified SHA")
+
+        # Get snapshot data
+        nodes = await snapshot_storage.get_snapshot_nodes(snapshot.snapshot_id)
+        edges = await snapshot_storage.get_snapshot_edges(snapshot.snapshot_id)
+
+        # Build response
+        response = SnapshotResponse(
+            sha=sha,
+            nodes=nodes,
+            edges=edges,
+            stats={
+                "node_count": snapshot.node_count,
+                "edge_count": snapshot.edge_count,
+                "created_at": snapshot.created_at.isoformat()
+            }
+        )
+
+        # Cache the response (TTL: 1 hour)
+        await redis_client.setex(cache_key, 3600, response.model_dump_json())
+
+        # Update metrics
+        CONTEXT_REQUESTS_TOTAL.inc()
+
+        span.set_attribute("node_count", snapshot.node_count)
+        span.set_attribute("edge_count", snapshot.edge_count)
+
+        logger.info(
+            "snapshot_retrieved",
+            repo_id=repo_id,
+            sha=sha,
+            node_count=snapshot.node_count,
+            edge_count=snapshot.edge_count
+        )
+
+        return response
 
 
 def _matches_filters(chunk: dict, filters: dict) -> bool:
