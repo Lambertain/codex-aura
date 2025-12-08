@@ -325,7 +325,7 @@ async def test_github_push_webhook_creates_snapshot(app, redis_client):
 ```
 
 **Критерии приёмки:**
-- [ ] Тест GitHub push → snapshot
+- [x] Тест GitHub push → snapshot
 - [ ] Тест GitLab merge request
 - [ ] Тест retry на failure
 - [ ] Тест dead letter queue
