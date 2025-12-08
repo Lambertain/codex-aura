@@ -97,6 +97,24 @@ Benchmark: flask (127 files, 45K LOC)
 Performance: 44K LOC/sec
 ```
 
+## Neo4j backup/restore
+
+Создание бэкапа (dump будет сохранён в `./backups`):
+
+```bash
+./scripts/neo4j_backup.sh
+```
+
+Восстановление из dump:
+
+```bash
+./scripts/neo4j_restore.sh neo4j_YYYYMMDD_HHMMSS.dump
+```
+
+Переменные окружения для настройки:
+- `BACKUP_DIR` — путь к каталогу с бэкапами (по умолчанию `./backups`)
+- `CONTAINER_NAME` — имя контейнера Neo4j (по умолчанию `codex-aura-neo4j-1`)
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:

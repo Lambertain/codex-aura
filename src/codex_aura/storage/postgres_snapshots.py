@@ -29,6 +29,7 @@ class PostgresSnapshotStorage:
 
     def __init__(self, connection_string: Optional[str] = None):
         self.connection_string = connection_string or settings.postgres_url
+        self.incremental_ready = False
 
     @asynccontextmanager
     async def connection(self):
@@ -101,6 +102,44 @@ class PostgresSnapshotStorage:
                 CREATE INDEX IF NOT EXISTS idx_snapshot_edges_snapshot_type
                 ON snapshot_edges (snapshot_id, edge_type);
             """)
+
+    async def ensure_incremental_tables(self, conn=None):
+        """Ensure tables for incremental graph storage exist."""
+        async def _create(connection):
+            await connection.execute("""
+                CREATE TABLE IF NOT EXISTS graph_nodes (
+                    fqn TEXT NOT NULL,
+                    repo_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    path TEXT,
+                    name TEXT,
+                    node_data JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (fqn, repo_id)
+                );
+            """)
+            await connection.execute("""
+                CREATE TABLE IF NOT EXISTS graph_edges (
+                    source_fqn TEXT NOT NULL,
+                    target_fqn TEXT NOT NULL,
+                    edge_type TEXT NOT NULL,
+                    repo_id TEXT NOT NULL,
+                    metadata JSONB,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (source_fqn, target_fqn, edge_type, repo_id)
+                );
+            """)
+            await connection.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_repo ON graph_nodes(repo_id);")
+            await connection.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_repo ON graph_edges(repo_id);")
+            await connection.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_fqn, repo_id);")
+            await connection.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_fqn, repo_id);")
+
+        if conn:
+            await _create(conn)
+        else:
+            async with self.connection() as c:
+                await _create(c)
+        self.incremental_ready = True
 
     async def create_snapshot(self, repo_id: str, sha: str, nodes: List[Node], edges: List[Edge]) -> str:
         """Create a new graph snapshot."""

@@ -84,9 +84,9 @@ echo "Restored from: ${BACKUP_FILE}"
 ```
 
 **Критерии приёмки:**
-- [ ] `scripts/neo4j_backup.sh` создаёт dump
-- [ ] `scripts/neo4j_restore.sh` восстанавливает из dump
-- [ ] Документация в README
+- [x] `scripts/neo4j_backup.sh` создаёт dump
+- [x] `scripts/neo4j_restore.sh` восстанавливает из dump
+- [x] Документация в README
 
 ---
 
@@ -583,8 +583,8 @@ class GraphTransaction:
 
 **Критерии приёмки:**
 - [x] GraphTransaction работает с SQLiteStorage
-- [ ] GraphTransaction работает с PostgresStorage
-- [ ] Rollback при исключениях
+- [x] GraphTransaction работает с PostgresStorage
+- [x] Rollback при исключениях
 - [ ] Unit tests для transaction behavior
 
 ---

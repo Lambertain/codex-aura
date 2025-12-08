@@ -530,50 +530,120 @@ class PostgresGraphTransaction:
     """PostgreSQL transaction implementation for incremental updates."""
 
     def __init__(self, snapshot_storage, repo_id: str):
-        self.snapshot_storage = snapshot_storage
+        from .postgres_snapshots import PostgresSnapshotStorage
+        self.snapshot_storage: PostgresSnapshotStorage = snapshot_storage
         self.repo_id = repo_id
-        self._operations = []
+        self._conn_ctx = None
+        self._conn = None
+        self._txn = None
 
     async def __aenter__(self):
+        # Open connection and start explicit transaction
+        self._conn_ctx = self.snapshot_storage.connection()
+        self._conn = await self._conn_ctx.__aenter__()
+        if not self.snapshot_storage.incremental_ready:
+            await self.snapshot_storage.ensure_incremental_tables(self._conn)
+        self._txn = self._conn.transaction()
+        await self._txn.start()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        # PostgreSQL transactions are handled by the connection pool
-        pass
+        if self._txn:
+            if exc_type is None:
+                await self._txn.commit()
+            else:
+                await self._txn.rollback()
+        if self._conn_ctx:
+            await self._conn_ctx.__aexit__(exc_type, exc_val, exc_tb)
 
     async def upsert_node(self, node) -> None:
-        """Upsert a node - stores operation for batch commit."""
-        self._operations.append(("upsert_node", node))
+        """Upsert node into graph_nodes."""
+        import json
+        fqn = node.path if getattr(node, "type", None) == "file" else getattr(node, "id", None)
+        if not fqn:
+            raise ValueError("Node must have id or path for FQN")
+        node_json = json.dumps(node.model_dump())
+        await self._conn.execute("""
+            INSERT INTO graph_nodes (fqn, repo_id, type, path, name, node_data)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (fqn, repo_id) DO UPDATE
+            SET type = EXCLUDED.type,
+                path = EXCLUDED.path,
+                name = EXCLUDED.name,
+                node_data = EXCLUDED.node_data,
+                updated_at = NOW()
+        """, fqn, self.repo_id, node.type, getattr(node, "path", None), getattr(node, "name", None), node_json)
 
     async def run(self, query: str, **parameters) -> list:
-        """Run a query - not directly supported, use specific methods."""
+        """Arbitrary query not supported for Postgres graph storage."""
         return []
 
     async def find_node_by_fqn(self, fqn: str):
-        """Find node by FQN - not implemented for PostgreSQL yet."""
+        """Find node by FQN."""
+        from ..models.node import Node
+        row = await self._conn.fetchrow("""
+            SELECT node_data FROM graph_nodes
+            WHERE fqn = $1 AND repo_id = $2
+        """, fqn, self.repo_id)
+        if row:
+            return Node.model_validate_json(row["node_data"])
         return None
 
     async def create_edge(self, source_fqn: str, target_fqn: str, edge_type, metadata=None) -> None:
-        """Create an edge - stores operation for batch commit."""
-        self._operations.append(("create_edge", source_fqn, target_fqn, edge_type, metadata))
+        """Create or upsert edge."""
+        import json
+        metadata_json = json.dumps(metadata) if metadata else None
+        edge_type_val = edge_type.value if hasattr(edge_type, "value") else str(edge_type)
+        await self._conn.execute("""
+            INSERT INTO graph_edges (source_fqn, target_fqn, edge_type, repo_id, metadata)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (source_fqn, target_fqn, edge_type, repo_id) DO UPDATE
+            SET metadata = EXCLUDED.metadata,
+                updated_at = NOW()
+        """, source_fqn, target_fqn, edge_type_val, self.repo_id, metadata_json)
 
     async def delete_edges_for_node(self, fqn: str) -> int:
-        """Delete edges for node - not fully implemented."""
-        self._operations.append(("delete_edges", fqn))
-        return 0
+        """Delete all edges from/to a node."""
+        result = await self._conn.execute("""
+            DELETE FROM graph_edges
+            WHERE repo_id = $1 AND (source_fqn = $2 OR target_fqn = $2)
+        """, self.repo_id, fqn)
+        return int(result.split()[-1])
 
     async def delete_outgoing_edges(self, fqn: str) -> int:
-        """Delete outgoing edges - not fully implemented."""
-        self._operations.append(("delete_outgoing_edges", fqn))
-        return 0
+        """Delete outgoing edges."""
+        result = await self._conn.execute("""
+            DELETE FROM graph_edges
+            WHERE repo_id = $1 AND source_fqn = $2
+        """, self.repo_id, fqn)
+        return int(result.split()[-1])
 
     async def node_exists(self, fqn: str) -> bool:
-        """Check if node exists - not implemented for PostgreSQL yet."""
-        return False
+        """Check if node exists."""
+        row = await self._conn.fetchrow("""
+            SELECT 1 FROM graph_nodes WHERE fqn = $1 AND repo_id = $2 LIMIT 1
+        """, fqn, self.repo_id)
+        return row is not None
 
     async def create_external_ref(self, source_fqn: str, ref) -> None:
-        """Create external reference."""
-        self._operations.append(("create_external_ref", source_fqn, ref))
+        """Create an external reference node and edge."""
+        import json
+        target_fqn = getattr(ref, "target_fqn", None)
+        if not target_fqn:
+            raise ValueError("Reference must have target_fqn")
+        edge_type_val = ref.edge_type.value if hasattr(ref.edge_type, "value") else str(ref.edge_type)
+
+        await self._conn.execute("""
+            INSERT INTO graph_nodes (fqn, repo_id, type, path, name, node_data)
+            VALUES ($1, $2, 'external', $1, $1, '{}')
+            ON CONFLICT (fqn, repo_id) DO NOTHING
+        """, target_fqn, self.repo_id)
+
+        await self._conn.execute("""
+            INSERT INTO graph_edges (source_fqn, target_fqn, edge_type, repo_id, metadata)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (source_fqn, target_fqn, edge_type, repo_id) DO NOTHING
+        """, source_fqn, target_fqn, edge_type_val, self.repo_id, json.dumps(getattr(ref, "metadata", None)))
 
 
 class PostgresStorageBackend(GraphStorage):
