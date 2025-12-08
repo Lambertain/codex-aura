@@ -37,6 +37,46 @@ class SyncStatusTracker:
         self.db = db
         self.redis_pool = redis_pool
 
+    async def acquire_sync_lock(self, repo_id: str, timeout: int = 300) -> bool:
+        """
+        Try to acquire exclusive sync lock for repository.
+        Returns True if lock acquired, False if already locked or Redis unavailable.
+        """
+        if not self.redis_pool:
+            return True  # No redis -> assume single instance
+
+        lock_key = f"sync_lock:{repo_id}"
+        try:
+            acquired = await self.redis_pool.set(
+                lock_key,
+                datetime.utcnow().isoformat(),
+                ex=timeout,
+                nx=True
+            )
+            return bool(acquired)
+        except Exception:
+            # Fallback to optimistic proceed without redis
+            return True
+
+    async def release_sync_lock(self, repo_id: str) -> None:
+        """Release sync lock if it exists."""
+        if not self.redis_pool:
+            return
+        try:
+            await self.redis_pool.delete(f"sync_lock:{repo_id}")
+        except Exception:
+            pass
+
+    async def is_sync_locked(self, repo_id: str) -> bool:
+        """Check if sync is currently locked."""
+        if not self.redis_pool:
+            return False
+        try:
+            value = await self.redis_pool.get(f"sync_lock:{repo_id}")
+            return value is not None
+        except Exception:
+            return False
+
     async def get_status(self, repo_id: str) -> SyncStatus:
         """Get current sync status for a repository."""
         # Check if currently syncing (in Redis)

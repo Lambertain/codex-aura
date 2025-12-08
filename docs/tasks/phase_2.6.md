@@ -708,9 +708,9 @@ async def update(self, repo_id: str, changes: list[FileChange], repo_path: Path)
 ```
 
 **Критерии приёмки:**
-- [ ] Redis-based distributed lock
-- [ ] Lock timeout для dead locks
-- [ ] Graceful handling когда lock занят
+- [x] Redis-based distributed lock
+- [x] Lock timeout для dead locks
+- [x] Graceful handling когда lock занят
 
 ---
 
