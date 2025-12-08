@@ -373,7 +373,14 @@ class IncrementalGraphUpdater:
             if not full_path.exists():
                 continue
 
-            content = full_path.read_text()
+            # Skip binary or undecodable files
+            if self._is_binary_file(full_path):
+                continue
+
+            content = self._read_text_fallback(full_path)
+            if content is None:
+                continue
+
             chunks = self.chunker.chunk_file(content, file_path)
 
             if chunks:
@@ -383,6 +390,29 @@ class IncrementalGraphUpdater:
                 await self.vectors.upsert_chunks(
                     collection, chunks, embeddings
                 )
+
+    @staticmethod
+    def _is_binary_file(path: Path) -> bool:
+        """Heuristic to detect binary files."""
+        try:
+            with open(path, "rb") as f:
+                chunk = f.read(8192)
+                return b"\x00" in chunk
+        except Exception:
+            return True
+
+    @staticmethod
+    def _read_text_fallback(path: Path) -> Optional[str]:
+        """Read text with fallback encodings and safe error handling."""
+        encodings = ["utf-8", "latin-1", "cp1252"]
+        for enc in encodings:
+            try:
+                return path.read_text(encoding=enc, errors="replace")
+            except UnicodeDecodeError:
+                continue
+            except Exception:
+                return None
+        return None
 
 
 class BatchIncrementalUpdater(IncrementalGraphUpdater):
