@@ -220,10 +220,13 @@ class Neo4jClient:
                     properties = node.model_dump()
                     properties["repo_id"] = sqlite_graph.repository.name
 
+                    # Use APOC to add dynamic labels (Cypher doesn't support parameterized labels)
                     await session.run("""
                         MERGE (n:Node {fqn: $fqn})
                         SET n += $properties
-                        SET n:$label
+                        WITH n
+                        CALL apoc.create.addLabels(n, [$label]) YIELD node
+                        RETURN node
                     """, fqn=fqn, properties=properties, label=label)
 
             # Create edges in batches
@@ -243,11 +246,12 @@ class Neo4jClient:
 
                     properties = edge.model_dump()
 
+                    # Use APOC to create dynamic relationship types
                     await session.run("""
                         MATCH (a:Node {fqn: $source})
                         MATCH (b:Node {fqn: $target})
-                        MERGE (a)-[r:$type]->(b)
-                        SET r += $properties
+                        CALL apoc.merge.relationship(a, $type, {}, $properties, b, {}) YIELD rel
+                        RETURN rel
                     """, source=source_fqn, target=target_fqn,
                         type=edge.type.value, properties=properties)
 

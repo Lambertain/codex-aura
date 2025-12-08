@@ -1,6 +1,8 @@
 """Billing API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+from dataclasses import asdict
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..billing.plans import PLAN_LIMITS, PlanTier, STRIPE_PRICES
@@ -9,6 +11,8 @@ from ..billing.webhook_handler import StripeWebhookHandler
 from ..storage.user_storage import UserStorage
 from ..models.user import User
 from ..api.middleware.auth import require_auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -23,7 +27,7 @@ async def get_plans():
     """Get available plans."""
     return {
         tier.value: {
-            "limits": limits.model_dump(),
+            "limits": asdict(limits),  # Use asdict for dataclass (E8-25)
             "price_id": STRIPE_PRICES.get(tier)
         }
         for tier, limits in PLAN_LIMITS.items()
@@ -32,7 +36,7 @@ async def get_plans():
 @router.post("/checkout")
 async def create_checkout_session(
     request: CheckoutRequest,
-    user: User = Depends(get_current_user)
+    user: User = Depends(require_auth)
 ):
     """Create Stripe checkout session."""
     if request.plan_tier not in STRIPE_PRICES:
@@ -59,7 +63,7 @@ async def create_checkout_session(
 @router.post("/portal")
 async def create_portal_session(
     request: PortalRequest,
-    user: User = Depends(get_current_user)
+    user: User = Depends(require_auth)
 ):
     """Create Stripe customer portal session."""
     if not user.stripe_customer_id:
@@ -80,7 +84,7 @@ async def get_current_plan(current_user=Depends(require_auth)):
 
     return {
         "plan": current_user.plan_tier.value,
-        "limits": limits.model_dump(),
+        "limits": asdict(limits),  # Use asdict for dataclass (E8-25)
         "subscription_status": current_user.subscription_status,
         "current_period_end": current_user.current_period_end,
         "stripe_customer_id": current_user.stripe_customer_id
@@ -108,7 +112,7 @@ async def stripe_webhook(request: Request):
         user_storage = UserStorage()
         handler = StripeWebhookHandler(user_storage)
 
-        if event.type == "invoice.payment_succeeded":
+        if event.type == "invoice.paid":  # Fixed: correct Stripe event name (E8-22)
             await handler.handle_invoice_paid(event.data.object)
         elif event.type == "customer.subscription.updated":
             await handler.handle_customer_subscription_updated(event.data.object)

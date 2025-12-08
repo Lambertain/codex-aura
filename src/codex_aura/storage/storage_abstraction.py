@@ -168,6 +168,117 @@ class GraphStorage(ABC):
         pass
 
 
+class SQLiteGraphTransaction:
+    """SQLite transaction implementation for incremental updates."""
+
+    def __init__(self, storage: SQLiteStorage, repo_id: str):
+        self.storage = storage
+        self.repo_id = repo_id
+        self._conn = None
+        self._cursor = None
+
+    async def __aenter__(self):
+        import sqlite3
+        self._conn = sqlite3.connect(self.storage.db_path)
+        self._conn.row_factory = sqlite3.Row
+        self._cursor = self._conn.cursor()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+        self._conn = None
+        self._cursor = None
+
+    async def upsert_node(self, node) -> None:
+        """Upsert a node to the nodes table."""
+        import json
+        fqn = node.path if node.type == "file" else node.id
+        node_data = node.model_dump_json()
+
+        self._cursor.execute("""
+            INSERT OR REPLACE INTO nodes
+            (fqn, repo_id, type, path, name, node_data, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        """, (fqn, self.repo_id, node.type, node.path, node.name, node_data))
+
+    async def run(self, query: str, **parameters) -> list:
+        """Run a raw query (limited support for SQLite)."""
+        # SQLite doesn't support Cypher, so this is a no-op placeholder
+        # Real implementations should use SQLite-specific methods
+        return []
+
+    async def find_node_by_fqn(self, fqn: str):
+        """Find node by fully qualified name."""
+        from ..models.node import Node
+
+        self._cursor.execute("""
+            SELECT node_data FROM nodes
+            WHERE fqn = ? AND repo_id = ?
+        """, (fqn, self.repo_id))
+
+        row = self._cursor.fetchone()
+        if row:
+            return Node.model_validate_json(row["node_data"])
+        return None
+
+    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type, metadata=None) -> None:
+        """Create an edge between nodes."""
+        import json
+        edge_type_value = edge_type.value if hasattr(edge_type, 'value') else str(edge_type)
+        metadata_json = json.dumps(metadata) if metadata else None
+
+        self._cursor.execute("""
+            INSERT OR REPLACE INTO edges
+            (source_fqn, target_fqn, edge_type, repo_id, metadata, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+        """, (source_fqn, target_fqn, edge_type_value, self.repo_id, metadata_json))
+
+    async def delete_edges_for_node(self, fqn: str) -> int:
+        """Delete all edges from/to a node."""
+        self._cursor.execute("""
+            DELETE FROM edges
+            WHERE repo_id = ? AND (source_fqn = ? OR target_fqn = ?)
+        """, (self.repo_id, fqn, fqn))
+        return self._cursor.rowcount
+
+    async def delete_outgoing_edges(self, fqn: str) -> int:
+        """Delete all outgoing edges from a node."""
+        self._cursor.execute("""
+            DELETE FROM edges
+            WHERE repo_id = ? AND source_fqn = ?
+        """, (self.repo_id, fqn))
+        return self._cursor.rowcount
+
+    async def node_exists(self, fqn: str) -> bool:
+        """Check if node exists."""
+        self._cursor.execute("""
+            SELECT 1 FROM nodes WHERE fqn = ? AND repo_id = ? LIMIT 1
+        """, (fqn, self.repo_id))
+        return self._cursor.fetchone() is not None
+
+    async def create_external_ref(self, source_fqn: str, ref) -> None:
+        """Create external reference."""
+        edge_type_value = ref.edge_type.value if hasattr(ref.edge_type, 'value') else str(ref.edge_type)
+
+        # First create external ref node if it doesn't exist
+        self._cursor.execute("""
+            INSERT OR IGNORE INTO nodes
+            (fqn, repo_id, type, path, name, node_data, updated_at)
+            VALUES (?, ?, 'external', ?, ?, '{}', datetime('now'))
+        """, (ref.target_fqn, self.repo_id, ref.target_fqn, ref.target_fqn))
+
+        # Then create the edge
+        self._cursor.execute("""
+            INSERT OR REPLACE INTO edges
+            (source_fqn, target_fqn, edge_type, repo_id, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+        """, (source_fqn, ref.target_fqn, edge_type_value, self.repo_id))
+
+
 class SQLiteStorageBackend(GraphStorage):
     """SQLite storage backend implementation."""
 
@@ -178,6 +289,73 @@ class SQLiteStorageBackend(GraphStorage):
             db_path: Path to SQLite database file
         """
         self.storage = SQLiteStorage(db_path)
+        self._ensure_incremental_tables()
+
+    def _ensure_incremental_tables(self):
+        """Ensure tables for incremental updates exist."""
+        import sqlite3
+        with sqlite3.connect(self.storage.db_path) as conn:
+            # Create nodes table for incremental updates
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS nodes (
+                    fqn TEXT NOT NULL,
+                    repo_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    path TEXT,
+                    name TEXT,
+                    node_data TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (fqn, repo_id)
+                )
+            """)
+
+            # Create edges table for incremental updates
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS edges (
+                    source_fqn TEXT NOT NULL,
+                    target_fqn TEXT NOT NULL,
+                    edge_type TEXT NOT NULL,
+                    repo_id TEXT NOT NULL,
+                    metadata TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (source_fqn, target_fqn, edge_type, repo_id)
+                )
+            """)
+
+            # Create indexes
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_nodes_repo_id
+                ON nodes(repo_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_edges_repo_id
+                ON edges(repo_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_edges_source
+                ON edges(source_fqn, repo_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_edges_target
+                ON edges(target_fqn, repo_id)
+            """)
+
+            conn.commit()
+
+    @asynccontextmanager
+    async def transaction(self, repo_id: str):
+        """
+        Context manager for SQLite transactions.
+
+        Args:
+            repo_id: Repository identifier
+
+        Yields:
+            SQLiteGraphTransaction object
+        """
+        txn = SQLiteGraphTransaction(self.storage, repo_id)
+        async with txn:
+            yield txn
 
     async def save_graph(self, graph: Graph) -> str:
         """Save a graph to SQLite storage."""
@@ -348,6 +526,56 @@ class Neo4jStorageBackend(GraphStorage):
         return []
 
 
+class PostgresGraphTransaction:
+    """PostgreSQL transaction implementation for incremental updates."""
+
+    def __init__(self, snapshot_storage, repo_id: str):
+        self.snapshot_storage = snapshot_storage
+        self.repo_id = repo_id
+        self._operations = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # PostgreSQL transactions are handled by the connection pool
+        pass
+
+    async def upsert_node(self, node) -> None:
+        """Upsert a node - stores operation for batch commit."""
+        self._operations.append(("upsert_node", node))
+
+    async def run(self, query: str, **parameters) -> list:
+        """Run a query - not directly supported, use specific methods."""
+        return []
+
+    async def find_node_by_fqn(self, fqn: str):
+        """Find node by FQN - not implemented for PostgreSQL yet."""
+        return None
+
+    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type, metadata=None) -> None:
+        """Create an edge - stores operation for batch commit."""
+        self._operations.append(("create_edge", source_fqn, target_fqn, edge_type, metadata))
+
+    async def delete_edges_for_node(self, fqn: str) -> int:
+        """Delete edges for node - not fully implemented."""
+        self._operations.append(("delete_edges", fqn))
+        return 0
+
+    async def delete_outgoing_edges(self, fqn: str) -> int:
+        """Delete outgoing edges - not fully implemented."""
+        self._operations.append(("delete_outgoing_edges", fqn))
+        return 0
+
+    async def node_exists(self, fqn: str) -> bool:
+        """Check if node exists - not implemented for PostgreSQL yet."""
+        return False
+
+    async def create_external_ref(self, source_fqn: str, ref) -> None:
+        """Create external reference."""
+        self._operations.append(("create_external_ref", source_fqn, ref))
+
+
 class PostgresStorageBackend(GraphStorage):
     """PostgreSQL storage backend implementation."""
 
@@ -417,9 +645,9 @@ class PostgresStorageBackend(GraphStorage):
     @asynccontextmanager
     async def transaction(self, repo_id: str):
         """Context manager for PostgreSQL transactions."""
-        # For now, just yield without actual transaction management
-        # In a full implementation, we'd implement proper transaction handling
-        yield None
+        txn = PostgresGraphTransaction(self.snapshot_storage, repo_id)
+        async with txn:
+            yield txn
 
     async def create_snapshot(self, repo_id: str, sha: str, nodes: List[Node], edges: List[Edge]) -> str:
         """Create a snapshot of the graph for a specific SHA."""

@@ -100,6 +100,7 @@ class Neo4jGraphTransaction:
     def __init__(self, session, repo_id: str):
         self.session = session
         self.repo_id = repo_id
+        self._valid_edge_types = {edge_type.value for edge_type in EdgeType}
 
     async def upsert_node(self, node: Node) -> None:
         """Upsert a node in Neo4j."""
@@ -118,7 +119,9 @@ class Neo4jGraphTransaction:
         await self.session.run("""
             MERGE (n:Node {fqn: $fqn})
             SET n += $properties
-            SET n:$label
+            WITH n
+            CALL apoc.create.addLabels(n, [$label]) YIELD node
+            RETURN node
         """, fqn=fqn, properties=properties, label=label)
 
     async def run(self, query: str, **parameters) -> List[Dict[str, Any]]:
@@ -140,12 +143,15 @@ class Neo4jGraphTransaction:
         return None
 
     async def create_edge(self, source_fqn: str, target_fqn: str, edge_type: EdgeType, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Create an edge between nodes."""
+        """Create an edge between nodes using APOC for dynamic relationship types."""
+        if edge_type.value not in self._valid_edge_types:
+            raise ValueError(f"Invalid edge type: {edge_type.value}")
         await self.session.run("""
             MATCH (a:Node {fqn: $source})
             MATCH (b:Node {fqn: $target})
-            MERGE (a)-[r:$type]->(b)
-        """, source=source_fqn, target=target_fqn, type=edge_type.value)
+            CALL apoc.merge.relationship(a, $type, {}, $props, b, {}) YIELD rel
+            RETURN rel
+        """, source=source_fqn, target=target_fqn, type=edge_type.value, props=metadata or {})
 
     async def delete_edges_for_node(self, fqn: str) -> int:
         """Delete all edges from/to a node."""
@@ -177,14 +183,16 @@ class Neo4jGraphTransaction:
         return record["exists"] if record else False
 
     async def create_external_ref(self, source_fqn: str, ref: "Reference") -> None:
-        """Create external reference."""
-        # For now, just create a placeholder node
+        """Create external reference using APOC for dynamic relationship types."""
+        if ref.edge_type.value not in self._valid_edge_types:
+            raise ValueError(f"Invalid edge type: {ref.edge_type.value}")
         await self.session.run("""
             MERGE (n:ExternalRef {fqn: $target})
             SET n.type = 'external'
             WITH n
             MATCH (s:Node {fqn: $source})
-            MERGE (s)-[r:$type]->(n)
+            CALL apoc.merge.relationship(s, $type, {}, {}, n, {}) YIELD rel
+            RETURN rel
         """, source=source_fqn, target=ref.target_fqn, type=ref.type.value)
 
 
