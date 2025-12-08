@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import asyncio
+import logging
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,8 @@ from ..analyzer.base import BaseAnalyzer
 from ..search.vector_store import VectorStore
 from ..search.embeddings import EmbeddingService, CodeChunker
 from . import ChangeType, FileChange
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -375,10 +378,12 @@ class IncrementalGraphUpdater:
 
             # Skip binary or undecodable files
             if self._is_binary_file(full_path):
+                logger.warning("Skipping binary file during vector update: %s", file_path)
                 continue
 
             content = self._read_text_fallback(full_path)
             if content is None:
+                logger.warning("Skipping unreadable file during vector update: %s", file_path)
                 continue
 
             chunks = self.chunker.chunk_file(content, file_path)

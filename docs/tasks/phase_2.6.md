@@ -763,9 +763,9 @@ def _is_binary_file(self, path: Path) -> bool:
 ```
 
 **Критерии приёмки:**
-- [ ] Binary файлы пропускаются
-- [ ] Fallback encodings для non-UTF8 файлов
-- [ ] Logging для skipped файлов
+- [x] Binary файлы пропускаются
+- [x] Fallback encodings для non-UTF8 файлов
+- [x] Logging для skipped файлов
 
 ---
 
