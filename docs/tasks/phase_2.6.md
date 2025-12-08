@@ -148,9 +148,9 @@ class EmbeddingService:
 ```
 
 **Критерии приёмки:**
-- [ ] Semaphore ограничивает concurrent requests
-- [ ] Retry с exponential backoff
-- [ ] Batch processing с паузами
+- [x] Semaphore ограничивает concurrent requests
+- [x] Retry с exponential backoff
+- [x] Batch processing с паузами
 
 ---
 
@@ -216,9 +216,9 @@ class HybridSearch:
 ```
 
 **Критерии приёмки:**
-- [ ] Результаты кешируются на 5 минут
-- [ ] Cache key учитывает все параметры
-- [ ] Метод `clear_cache()` для инвалидации
+- [x] Результаты кешируются на 5 минут
+- [x] Cache key учитывает все параметры
+- [x] Метод `clear_cache()` для инвалидации
 
 ---
 
@@ -582,7 +582,7 @@ class GraphTransaction:
 ```
 
 **Критерии приёмки:**
-- [ ] GraphTransaction работает с SQLiteStorage
+- [x] GraphTransaction работает с SQLiteStorage
 - [ ] GraphTransaction работает с PostgresStorage
 - [ ] Rollback при исключениях
 - [ ] Unit tests для transaction behavior

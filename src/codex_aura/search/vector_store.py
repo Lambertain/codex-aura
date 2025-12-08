@@ -1,6 +1,10 @@
+import hashlib
+import time
+from typing import List, Optional
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from typing import List
+
 from .embeddings import CodeChunk, SearchResult, RankedNode, EmbeddingService
 from ..storage.storage_abstraction import get_storage
 
@@ -110,14 +114,29 @@ class HybridSearch:
     def __init__(self, semantic_search: SemanticSearch, storage=None):
         self.semantic = semantic_search
         self.graph = storage or get_storage()
+        self._cache: dict[str, tuple[list[RankedNode], float]] = {}
+        self._cache_ttl = 300  # seconds
+
+    def _cache_key(self, repo_id: str, task: str, entry_points: list[str], depth: int) -> str:
+        """Generate cache key from search parameters."""
+        key_data = f"{repo_id}:{task}:{sorted(entry_points)}:{depth}"
+        return hashlib.md5(key_data.encode()).hexdigest()
 
     async def search(
         self,
         repo_id: str,
         task: str,
         entry_points: list[str],
-        depth: int = 2
+        depth: int = 2,
+        use_cache: bool = True
     ) -> list[RankedNode]:
+        cache_key = self._cache_key(repo_id, task, entry_points, depth)
+
+        if use_cache and cache_key in self._cache:
+            cached_result, cached_time = self._cache[cache_key]
+            if time.time() - cached_time < self._cache_ttl:
+                return cached_result
+
         # 1. Get structurally relevant nodes from graph
         graph_nodes = []
         for entry_point in entry_points:
@@ -166,4 +185,15 @@ class HybridSearch:
             )
             ranked.append(RankedNode(fqn=fqn, score=combined))
 
-        return sorted(ranked, key=lambda x: x.score, reverse=True)
+        ranked_sorted = sorted(ranked, key=lambda x: x.score, reverse=True)
+        self._cache[cache_key] = (ranked_sorted, time.time())
+        return ranked_sorted
+
+    def clear_cache(self, repo_id: Optional[str] = None):
+        """Clear cache entries; optionally only for a specific repo."""
+        if repo_id is None:
+            self._cache.clear()
+            return
+        keys_to_delete = [k for k in self._cache if k.startswith(repo_id)]
+        for k in keys_to_delete:
+            self._cache.pop(k, None)

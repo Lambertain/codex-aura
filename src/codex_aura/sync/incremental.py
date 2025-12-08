@@ -34,64 +34,70 @@ class IncrementalUpdateResult:
 
 
 class GraphTransaction:
-    """Transaction context for graph operations."""
+    """Thin wrapper that delegates to backend-specific transactions."""
 
     def __init__(self, storage: GraphStorage, repo_id: str):
         self.storage = storage
         self.repo_id = repo_id
-        self.operations = []
-
-    async def upsert_node(self, node: Node) -> None:
-        """Upsert a node."""
-        # For Neo4j, this would be a MERGE operation
-        # For SQLite, this would be an INSERT OR REPLACE
-        self.operations.append(("upsert_node", node))
-
-    async def run(self, query: str, **parameters) -> List[Dict[str, Any]]:
-        """Run a query."""
-        self.operations.append(("run", query, parameters))
-        # This is a placeholder - actual implementation would depend on storage backend
-        return []
-
-    async def find_node_by_fqn(self, fqn: str) -> Optional[Node]:
-        """Find node by fully qualified name."""
-        self.operations.append(("find_node", fqn))
-        # This is a placeholder - actual implementation would depend on storage backend
-        return None
-
-    async def create_edge(self, source_fqn: str, target_fqn: str, edge_type: EdgeType, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Create an edge between nodes."""
-        self.operations.append(("create_edge", source_fqn, target_fqn, edge_type, metadata))
-
-    async def delete_edges_for_node(self, fqn: str) -> int:
-        """Delete all edges from/to a node."""
-        self.operations.append(("delete_edges_for_node", fqn))
-        return 0  # Placeholder
-
-    async def delete_outgoing_edges(self, fqn: str) -> int:
-        """Delete all outgoing edges from a node."""
-        self.operations.append(("delete_outgoing_edges", fqn))
-        return 0  # Placeholder
-
-    async def node_exists(self, fqn: str) -> bool:
-        """Check if node exists."""
-        self.operations.append(("node_exists", fqn))
-        return False  # Placeholder
-
-    async def create_external_ref(self, source_fqn: str, ref: "Reference") -> None:
-        """Create external reference."""
-        self.operations.append(("create_external_ref", source_fqn, ref))
+        self._ctx = None
+        self._txn = None
 
     async def __aenter__(self):
+        # Each storage backend provides its own transaction object.
+        self._ctx = self.storage.transaction(self.repo_id)
+        self._txn = await self._ctx.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            # Commit operations
-            pass
-        else:
-            # Rollback operations
-            pass
+        if self._ctx:
+            return await self._ctx.__aexit__(exc_type, exc_val, exc_tb)
+        return False
+
+    async def upsert_node(self, node: Node) -> None:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.upsert_node(node)
+
+    async def run(self, query: str, **parameters) -> List[Dict[str, Any]]:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.run(query, **parameters)
+
+    async def find_node_by_fqn(self, fqn: str) -> Optional[Node]:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.find_node_by_fqn(fqn)
+
+    async def create_edge(
+        self,
+        source_fqn: str,
+        target_fqn: str,
+        edge_type: EdgeType,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.create_edge(source_fqn, target_fqn, edge_type, metadata)
+
+    async def delete_edges_for_node(self, fqn: str) -> int:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.delete_edges_for_node(fqn)
+
+    async def delete_outgoing_edges(self, fqn: str) -> int:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.delete_outgoing_edges(fqn)
+
+    async def node_exists(self, fqn: str) -> bool:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.node_exists(fqn)
+
+    async def create_external_ref(self, source_fqn: str, ref: "Reference") -> None:
+        if not self._txn:
+            raise RuntimeError("Transaction not started")
+        return await self._txn.create_external_ref(source_fqn, ref)
 
 
 class Neo4jGraphTransaction:
@@ -240,7 +246,7 @@ class IncrementalGraphUpdater:
             added_files = [c.path for c in changes if c.change_type == ChangeType.ADDED]
             renamed_files = [c for c in changes if c.change_type == ChangeType.RENAMED]
 
-            async with self.storage.transaction(repo_id) as txn:
+            async with GraphTransaction(self.storage, repo_id) as txn:
                 # Step 1: Handle deletions
                 for file_path in deleted_files:
                     deleted_count = await self._delete_file_nodes(txn, file_path)
