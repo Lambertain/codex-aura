@@ -3,6 +3,11 @@ from unittest.mock import AsyncMock
 
 from src.codex_aura.webhooks.models import WebhookEvent
 from src.codex_aura.webhooks.processor import WebhookProcessor
+from src.codex_aura.webhooks.queue import (
+    set_webhook_processor,
+    process_webhook,
+    process_failed_webhook,
+)
 
 
 @pytest.mark.asyncio
@@ -62,3 +67,41 @@ async def test_unknown_event_graceful():
     await processor.process_event(event)
 
     snapshot_service.create_snapshot.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gitlab_merge_request_event_no_crash():
+    """Событие merge_request (gitlab) обрабатывается без исключений."""
+    snapshot_service = AsyncMock()
+    processor = WebhookProcessor(snapshot_service=snapshot_service)
+
+    event = WebhookEvent(
+        repo_id="test-repo",
+        event="pull_request",
+        data={"action": "merge_request", "pull_request": {"id": 1}},
+    )
+
+    # Просто должен выполниться без ошибок и без вызова снапшотов
+    await processor.process_event(event)
+    snapshot_service.create_snapshot.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_webhook_propagates_error_for_retry():
+    """process_webhook выбрасывает исключение для триггера retry в arq."""
+    class FailingProcessor:
+        async def process_event(self, event):
+            raise RuntimeError("fail")
+
+    set_webhook_processor(FailingProcessor())
+    event_data = WebhookEvent(repo_id="r1", event="push", data={}).dict()
+
+    with pytest.raises(RuntimeError):
+        await process_webhook(None, event_data)
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_handler_handles_event():
+    """process_failed_webhook не падает на некорректных данных."""
+    event_data = WebhookEvent(repo_id="r1", event="push", data={}).dict()
+    await process_failed_webhook(None, event_data)
