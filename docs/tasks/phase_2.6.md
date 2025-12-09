@@ -329,6 +329,7 @@ async def test_github_push_webhook_creates_snapshot(app, redis_client):
 - [x] Тест GitLab merge request
 - [x] Тест retry на failure
 - [x] Тест dead letter queue
+*Примечание: тесты добавлены, запуск не выполнялся в текущем окружении.*
 
 ---
 
